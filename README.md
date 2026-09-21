@@ -22,6 +22,12 @@ npm run build
 npm run preview
 ```
 
+ユニットテスト実行:
+
+```bash
+npm test
+```
+
 ## ビュー操作
 
 - 全体表示: 図面全体が収まる表示に戻します

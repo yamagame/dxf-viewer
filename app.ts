@@ -1,7 +1,12 @@
 import DxfParser from "dxf-parser";
-
-type Point = { x: number; y: number };
-type Segment = { layer: string; from: Point; to: Point };
+import {
+  distancePointToSegment,
+  getVertexKey,
+  intersectSegments,
+  normalizeLayerName,
+  type Point,
+  type Segment,
+} from "./geometry";
 
 type DrawCommand =
   | { type: "line"; layer: string; from: Point; to: Point }
@@ -73,7 +78,6 @@ const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 20;
 const VERTEX_SNAP_PIXEL = 12;
 const EDGE_SNAP_PIXEL = 8;
-const INTERSECTION_EPSILON = 1e-9;
 
 window.addEventListener("resize", () => {
   resizeCanvas();
@@ -297,11 +301,6 @@ function updatePanAvailabilityClass() {
   canvas.classList.toggle("is-pan-ready", Boolean(canPan));
 }
 
-function normalizeLayerName(layerName) {
-  if (!layerName || typeof layerName !== "string") return "0";
-  return layerName;
-}
-
 function createDefaultLayerVisibility(layers) {
   const visibility = new Map();
   layers.forEach((layer) => {
@@ -522,25 +521,6 @@ function findNearestEdgeFromPointerEvent(event) {
   return nearest;
 }
 
-function distancePointToSegment(px, py, x1, y1, x2, y2) {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  if (dx === 0 && dy === 0) {
-    return Math.hypot(px - x1, py - y1);
-  }
-  const t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy);
-  const clampedT = Math.max(0, Math.min(1, t));
-  const cx = x1 + clampedT * dx;
-  const cy = y1 + clampedT * dy;
-  return Math.hypot(px - cx, py - cy);
-}
-
-function getVertexKey(x, y) {
-  const normalizedX = Number(x.toFixed(6));
-  const normalizedY = Number(y.toFixed(6));
-  return `${normalizedX}:${normalizedY}`;
-}
-
 function rebuildSelectableVertices() {
   const vertices = [];
   const vertexKeySet = new Set();
@@ -744,41 +724,6 @@ function extractDrawData(entities: any[]): ExtractedDrawData {
     layers: Array.from(layersSet).sort((a, b) => a.localeCompare(b)),
     bounds: { minX, minY, maxX, maxY },
   };
-}
-
-function intersectSegments(segA, segB) {
-  const p = segA.from;
-  const r = { x: segA.to.x - segA.from.x, y: segA.to.y - segA.from.y };
-  const q = segB.from;
-  const s = { x: segB.to.x - segB.from.x, y: segB.to.y - segB.from.y };
-
-  const rxs = cross2D(r, s);
-  const qMinusP = { x: q.x - p.x, y: q.y - p.y };
-  const qpxr = cross2D(qMinusP, r);
-
-  if (Math.abs(rxs) < INTERSECTION_EPSILON) {
-    if (Math.abs(qpxr) < INTERSECTION_EPSILON) {
-      return null;
-    }
-    return null;
-  }
-
-  const t = cross2D(qMinusP, s) / rxs;
-  const u = cross2D(qMinusP, r) / rxs;
-  const inRange = (value) => value >= -INTERSECTION_EPSILON && value <= 1 + INTERSECTION_EPSILON;
-
-  if (!inRange(t) || !inRange(u)) {
-    return null;
-  }
-
-  return {
-    x: p.x + t * r.x,
-    y: p.y + t * r.y,
-  };
-}
-
-function cross2D(a, b) {
-  return a.x * b.y - a.y * b.x;
 }
 
 function fitToScreen() {
