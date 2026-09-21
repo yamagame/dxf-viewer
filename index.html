@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DXF Viewer</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="toolbar">
+        <div class="toolbar-title">DXF Viewer</div>
+        <div class="toolbar-controls">
+          <input id="fileInput" type="file" accept=".dxf" />
+          <button id="fitButton" type="button" disabled>全体表示</button>
+          <button id="zoomOutButton" type="button" disabled>縮小 -</button>
+          <button id="zoomInButton" type="button" disabled>拡大 +</button>
+        </div>
+        <p id="status" class="status">ファイルを選択してください。</p>
+        <p id="edgeInfo" class="edge-info">エッジ選択: エッジをクリックしてください。</p>
+        <p id="measureInfo" class="measure-info">距離測定: 2頂点をクリックしてください。</p>
+      </header>
+      <section class="viewer-area">
+        <canvas id="viewer"></canvas>
+        <aside class="layer-window" aria-label="レイヤー表示設定">
+          <h2 class="layer-window-title">レイヤー</h2>
+          <div id="layerControls" class="layer-controls"></div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/dxf-parser/dist/dxf-parser.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
