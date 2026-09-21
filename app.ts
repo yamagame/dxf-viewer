@@ -2,24 +2,19 @@ import DxfParser from "dxf-parser";
 import {
   distancePointToSegment,
   getVertexKey,
-  intersectSegments,
-  normalizeLayerName,
   type Point,
   type Segment,
 } from "./geometry";
-
-type DrawCommand =
-  | { type: "line"; layer: string; from: Point; to: Point }
-  | { type: "polyline"; layer: string; vertices: Point[]; closed: boolean }
-  | { type: "circle"; layer: string; center: Point; radius: number }
-  | { type: "arc"; layer: string; center: Point; radius: number; start: number; end: number };
-
-type ExtractedDrawData = {
-  commands: DrawCommand[];
-  segments: Segment[];
-  layers: string[];
-  bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
-};
+import {
+  computeSelectableVertices,
+  createDefaultLayerVisibility,
+  extractDrawData,
+  getVisibleSegments,
+  isLayerVisible,
+  type Bounds,
+  type DrawCommand,
+} from "./drawing-model";
+type PointerLikeEvent = { clientX: number; clientY: number };
 
 function getRequiredElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -45,7 +40,7 @@ let drawSegments: Segment[] = [];
 let selectableVertices: Point[] = [];
 let layerNames: string[] = [];
 let layerVisibility = new Map<string, boolean>();
-let bounds = null;
+let bounds: Bounds | null = null;
 let zoomLevel = 1;
 let baseScale = 1;
 let panX = 0;
@@ -67,7 +62,7 @@ let measurementDeltaY = null;
 let selectedEdge: Segment | null = null;
 let hoveredEdge: Segment | null = null;
 let hoveredVertex: Point | null = null;
-let viewTransform = {
+let viewTransform: { scale: number; offsetX: number; offsetY: number } = {
   scale: 1,
   offsetX: 0,
   offsetY: 0,
@@ -79,48 +74,17 @@ const MAX_ZOOM = 20;
 const VERTEX_SNAP_PIXEL = 12;
 const EDGE_SNAP_PIXEL = 8;
 
-window.addEventListener("resize", () => {
-  resizeCanvas();
-});
+function hasLoadedDrawing(): boolean {
+  return drawCommands.length > 0 && bounds !== null;
+}
 
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Shift") {
-    isShiftPressed = true;
-    updatePanAvailabilityClass();
-  }
+function setZoomControlsEnabled(enabled: boolean): void {
+  fitButton.disabled = !enabled;
+  zoomInButton.disabled = !enabled;
+  zoomOutButton.disabled = !enabled;
+}
 
-  if (!drawCommands.length || !bounds) return;
-
-  if (isZoomInShortcut(event)) {
-    event.preventDefault();
-    applyZoom(ZOOM_STEP);
-  } else if (isZoomOutShortcut(event)) {
-    event.preventDefault();
-    applyZoom(1 / ZOOM_STEP);
-  }
-});
-
-window.addEventListener("keyup", (event) => {
-  if (event.key !== "Shift") return;
-  isShiftPressed = false;
-  endDrag();
-  updatePanAvailabilityClass();
-});
-
-window.addEventListener("blur", () => {
-  isShiftPressed = false;
-  endDrag();
-  updatePanAvailabilityClass();
-});
-
-fileInput.addEventListener("change", async (event) => {
-  const [file] = fileInput.files || [];
-  if (!file) return;
-
-  statusEl.textContent = `読み込み中: ${file.name}`;
-  fitButton.disabled = true;
-  zoomInButton.disabled = true;
-  zoomOutButton.disabled = true;
+function resetLoadedDataState(): void {
   drawCommands = [];
   drawSegments = [];
   selectableVertices = [];
@@ -131,6 +95,49 @@ fileInput.addEventListener("change", async (event) => {
   renderLayerControls();
   resetMeasurement();
   updatePanAvailabilityClass();
+}
+
+window.addEventListener("resize", (): void => {
+  resizeCanvas();
+});
+
+window.addEventListener("keydown", (event: KeyboardEvent): void => {
+  if (event.key === "Shift") {
+    isShiftPressed = true;
+    updatePanAvailabilityClass();
+  }
+
+  if (!hasLoadedDrawing()) return;
+
+  if (isZoomInShortcut(event)) {
+    event.preventDefault();
+    applyZoom(ZOOM_STEP);
+  } else if (isZoomOutShortcut(event)) {
+    event.preventDefault();
+    applyZoom(1 / ZOOM_STEP);
+  }
+});
+
+window.addEventListener("keyup", (event: KeyboardEvent): void => {
+  if (event.key !== "Shift") return;
+  isShiftPressed = false;
+  endDrag();
+  updatePanAvailabilityClass();
+});
+
+window.addEventListener("blur", (): void => {
+  isShiftPressed = false;
+  endDrag();
+  updatePanAvailabilityClass();
+});
+
+fileInput.addEventListener("change", async (): Promise<void> => {
+  const [file] = fileInput.files || [];
+  if (!file) return;
+
+  statusEl.textContent = `読み込み中: ${file.name}`;
+  setZoomControlsEnabled(false);
+  resetLoadedDataState();
   clearCanvas();
 
   try {
@@ -153,9 +160,7 @@ fileInput.addEventListener("change", async (event) => {
     bounds = extracted.bounds;
     resetMeasurement();
     fitToScreen();
-    fitButton.disabled = false;
-    zoomInButton.disabled = false;
-    zoomOutButton.disabled = false;
+    setZoomControlsEnabled(true);
     updatePanAvailabilityClass();
     statusEl.textContent = `表示完了: ${file.name} (${drawCommands.length}要素, ${layerNames.length}レイヤー)`;
   } catch (error) {
@@ -165,23 +170,23 @@ fileInput.addEventListener("change", async (event) => {
   }
 });
 
-fitButton.addEventListener("click", () => {
-  if (!drawCommands.length || !bounds) return;
+fitButton.addEventListener("click", (): void => {
+  if (!hasLoadedDrawing()) return;
   fitToScreen();
 });
 
-zoomInButton.addEventListener("click", () => {
-  if (!drawCommands.length || !bounds) return;
+zoomInButton.addEventListener("click", (): void => {
+  if (!hasLoadedDrawing()) return;
   applyZoom(ZOOM_STEP);
 });
 
-zoomOutButton.addEventListener("click", () => {
-  if (!drawCommands.length || !bounds) return;
+zoomOutButton.addEventListener("click", (): void => {
+  if (!hasLoadedDrawing()) return;
   applyZoom(1 / ZOOM_STEP);
 });
 
-canvas.addEventListener("pointerdown", (event) => {
-  if (!drawCommands.length || !bounds) return;
+canvas.addEventListener("pointerdown", (event: PointerEvent): void => {
+  if (!hasLoadedDrawing()) return;
   const panByMiddleButton = event.button === 1;
   const panByShiftDrag = event.button === 0 && event.shiftKey;
   if (!panByMiddleButton && !panByShiftDrag) return;
@@ -199,7 +204,7 @@ canvas.addEventListener("pointerdown", (event) => {
   canvas.classList.add("is-dragging");
 });
 
-canvas.addEventListener("pointermove", (event) => {
+canvas.addEventListener("pointermove", (event: PointerEvent): void => {
   updateHoveredEdge(event);
   updateHoveredVertex(event);
 
@@ -219,7 +224,7 @@ canvas.addEventListener("pointermove", (event) => {
   render();
 });
 
-canvas.addEventListener("pointerup", (event) => {
+canvas.addEventListener("pointerup", (event: PointerEvent): void => {
   if (isDragging && event.pointerId === activePointerId) {
     suppressNextClick = didDrag && !isPanByMiddleButton;
   }
@@ -227,7 +232,7 @@ canvas.addEventListener("pointerup", (event) => {
   updatePanAvailabilityClass();
 });
 
-canvas.addEventListener("pointercancel", (event) => {
+canvas.addEventListener("pointercancel", (event: PointerEvent): void => {
   if (isDragging && event.pointerId === activePointerId) {
     suppressNextClick = didDrag && !isPanByMiddleButton;
   }
@@ -238,14 +243,14 @@ canvas.addEventListener("pointercancel", (event) => {
   updatePanAvailabilityClass();
 });
 
-canvas.addEventListener("pointerleave", () => {
+canvas.addEventListener("pointerleave", (): void => {
   hoveredEdge = null;
   hoveredVertex = null;
   render();
 });
 
-canvas.addEventListener("click", (event) => {
-  if (!drawCommands.length || !bounds) return;
+canvas.addEventListener("click", (event: MouseEvent): void => {
+  if (!hasLoadedDrawing()) return;
   if (event.shiftKey) return;
   if (suppressNextClick) {
     suppressNextClick = false;
@@ -257,8 +262,8 @@ canvas.addEventListener("click", (event) => {
 
 canvas.addEventListener(
   "wheel",
-  (event) => {
-    if (!drawCommands.length || !bounds) return;
+  (event: WheelEvent): void => {
+    if (!hasLoadedDrawing()) return;
     event.preventDefault();
     if (isDragging) {
       return;
@@ -301,21 +306,7 @@ function updatePanAvailabilityClass() {
   canvas.classList.toggle("is-pan-ready", Boolean(canPan));
 }
 
-function createDefaultLayerVisibility(layers) {
-  const visibility = new Map();
-  layers.forEach((layer) => {
-    visibility.set(layer, true);
-  });
-  return visibility;
-}
-
-function isLayerVisible(layerName) {
-  if (!layerVisibility.size) return true;
-  return layerVisibility.get(normalizeLayerName(layerName)) !== false;
-}
-
 function renderLayerControls() {
-  if (!layerControlsEl) return;
   layerControlsEl.innerHTML = "";
   if (!layerNames.length) {
     const empty = document.createElement("span");
@@ -330,7 +321,7 @@ function renderLayerControls() {
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.checked = isLayerVisible(layer);
+    checkbox.checked = isLayerVisible(layerVisibility, layer);
     checkbox.addEventListener("change", () => {
       layerVisibility.set(layer, checkbox.checked);
       rebuildSelectableVertices();
@@ -359,17 +350,13 @@ function updateEdgeInfo(message) {
   edgeInfoEl.textContent = message;
 }
 
-function getVisibleSegments() {
-  return drawSegments.filter((segment) => isLayerVisible(segment.layer));
-}
-
 function validateEdgeSelection() {
   if (!selectedEdge) return;
-  if (!isLayerVisible(selectedEdge.layer)) {
+  if (!isLayerVisible(layerVisibility, selectedEdge.layer)) {
     selectedEdge = null;
     updateEdgeInfo("エッジ選択: エッジをクリックしてください。");
   }
-  if (hoveredEdge && !isLayerVisible(hoveredEdge.layer)) {
+  if (hoveredEdge && !isLayerVisible(layerVisibility, hoveredEdge.layer)) {
     hoveredEdge = null;
   }
 }
@@ -395,7 +382,7 @@ function modelToCanvas(point) {
   };
 }
 
-function selectMeasureVertex(event) {
+function selectMeasureVertex(event: PointerLikeEvent): void {
   const nearest = findNearestVertexFromPointerEvent(event);
   if (!nearest) {
     updateMeasurementInfo("距離測定: 頂点付近をクリックしてください。");
@@ -426,7 +413,7 @@ function selectMeasureVertex(event) {
   render();
 }
 
-function selectEdge(event) {
+function selectEdge(event: PointerLikeEvent): void {
   const nearest = findNearestEdgeFromPointerEvent(event);
   if (!nearest) {
     selectedEdge = null;
@@ -439,7 +426,7 @@ function selectEdge(event) {
   render();
 }
 
-function updateHoveredEdge(event) {
+function updateHoveredEdge(event: PointerLikeEvent): void {
   if (!drawCommands.length || !bounds || isDragging) return;
   const nextHovered = findNearestEdgeFromPointerEvent(event);
   if (
@@ -455,7 +442,7 @@ function updateHoveredEdge(event) {
   render();
 }
 
-function updateHoveredVertex(event) {
+function updateHoveredVertex(event: PointerLikeEvent): void {
   if (!drawCommands.length || !bounds || isDragging) return;
   const nextHovered = findNearestVertexFromPointerEvent(event);
   if (
@@ -468,7 +455,7 @@ function updateHoveredVertex(event) {
   render();
 }
 
-function findNearestVertexFromPointerEvent(event) {
+function findNearestVertexFromPointerEvent(event: PointerLikeEvent): Point | null {
   if (!selectableVertices.length) return null;
 
   const canvasRect = canvas.getBoundingClientRect();
@@ -494,8 +481,8 @@ function findNearestVertexFromPointerEvent(event) {
   return nearest;
 }
 
-function findNearestEdgeFromPointerEvent(event) {
-  const visibleSegments = getVisibleSegments();
+function findNearestEdgeFromPointerEvent(event: PointerLikeEvent): Segment | null {
+  const visibleSegments = getVisibleSegments(drawSegments, layerVisibility);
   if (!visibleSegments.length) return null;
 
   const canvasRect = canvas.getBoundingClientRect();
@@ -522,31 +509,9 @@ function findNearestEdgeFromPointerEvent(event) {
 }
 
 function rebuildSelectableVertices() {
-  const vertices = [];
-  const vertexKeySet = new Set();
-  const visibleSegments = getVisibleSegments();
-
-  const includeVertex = (x, y) => {
-    const key = getVertexKey(x, y);
-    if (vertexKeySet.has(key)) return;
-    vertexKeySet.add(key);
-    const [normalizedX, normalizedY] = key.split(":").map(Number);
-    vertices.push({ x: normalizedX, y: normalizedY });
-  };
-
-  for (const segment of visibleSegments) {
-    includeVertex(segment.from.x, segment.from.y);
-    includeVertex(segment.to.x, segment.to.y);
-  }
-
-  for (let i = 0; i < visibleSegments.length - 1; i += 1) {
-    for (let j = i + 1; j < visibleSegments.length; j += 1) {
-      const intersection = intersectSegments(visibleSegments[i], visibleSegments[j]);
-      if (!intersection) continue;
-      includeVertex(intersection.x, intersection.y);
-    }
-  }
-
+  const visibleSegments = getVisibleSegments(drawSegments, layerVisibility);
+  const vertices = computeSelectableVertices(visibleSegments);
+  const vertexKeySet = new Set(vertices.map((v) => getVertexKey(v.x, v.y)));
   selectableVertices = vertices;
   if (hoveredVertex) {
     const key = getVertexKey(hoveredVertex.x, hoveredVertex.y);
@@ -610,122 +575,6 @@ function applyZoom(zoomFactor) {
   render();
 }
 
-function extractDrawData(entities: any[]): ExtractedDrawData {
-  const commands = [];
-  const segments = [];
-  const layersSet = new Set<string>();
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  const includePoint = (x, y) => {
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  };
-
-  const includeVertices = (vertices = []) => {
-    vertices.forEach((v) => includePoint(v.x, v.y));
-  };
-
-  for (const entity of entities) {
-    const layer = normalizeLayerName(entity.layer);
-    layersSet.add(layer);
-
-    if (entity.type === "LINE" && entity.vertices?.length >= 2) {
-      const [a, b] = entity.vertices;
-      includePoint(a.x, a.y);
-      includePoint(b.x, b.y);
-      segments.push({
-        layer,
-        from: { x: a.x, y: a.y },
-        to: { x: b.x, y: b.y },
-      });
-      commands.push({
-        type: "line",
-        layer,
-        from: { x: a.x, y: a.y },
-        to: { x: b.x, y: b.y },
-      });
-      continue;
-    }
-
-    if (
-      (entity.type === "LWPOLYLINE" || entity.type === "POLYLINE") &&
-      entity.vertices?.length >= 2
-    ) {
-      includeVertices(entity.vertices);
-      for (let i = 0; i < entity.vertices.length - 1; i += 1) {
-        segments.push({
-          layer,
-          from: { x: entity.vertices[i].x, y: entity.vertices[i].y },
-          to: { x: entity.vertices[i + 1].x, y: entity.vertices[i + 1].y },
-        });
-      }
-      if (entity.shape) {
-        const first = entity.vertices[0];
-        const last = entity.vertices[entity.vertices.length - 1];
-        segments.push({
-          layer,
-          from: { x: last.x, y: last.y },
-          to: { x: first.x, y: first.y },
-        });
-      }
-      commands.push({
-        type: "polyline",
-        layer,
-        vertices: entity.vertices.map((v) => ({ x: v.x, y: v.y })),
-        closed: Boolean(entity.shape),
-      });
-      continue;
-    }
-
-    if (entity.type === "CIRCLE" && entity.center && Number.isFinite(entity.radius)) {
-      includePoint(entity.center.x - entity.radius, entity.center.y - entity.radius);
-      includePoint(entity.center.x + entity.radius, entity.center.y + entity.radius);
-      commands.push({
-        type: "circle",
-        layer,
-        center: { x: entity.center.x, y: entity.center.y },
-        radius: entity.radius,
-      });
-      continue;
-    }
-
-    if (
-      entity.type === "ARC" &&
-      entity.center &&
-      Number.isFinite(entity.radius) &&
-      Number.isFinite(entity.startAngle) &&
-      Number.isFinite(entity.endAngle)
-    ) {
-      includePoint(entity.center.x - entity.radius, entity.center.y - entity.radius);
-      includePoint(entity.center.x + entity.radius, entity.center.y + entity.radius);
-      commands.push({
-        type: "arc",
-        layer,
-        center: { x: entity.center.x, y: entity.center.y },
-        radius: entity.radius,
-        start: (entity.startAngle * Math.PI) / 180,
-        end: (entity.endAngle * Math.PI) / 180,
-      });
-    }
-  }
-
-  if (!Number.isFinite(minX)) {
-    return { commands: [], segments: [], layers: [], bounds: null };
-  }
-
-  return {
-    commands,
-    segments,
-    layers: Array.from(layersSet).sort((a, b) => a.localeCompare(b)),
-    bounds: { minX, minY, maxX, maxY },
-  };
-}
-
 function fitToScreen() {
   const padding = 30;
   const modelW = bounds.maxX - bounds.minX || 1;
@@ -764,7 +613,9 @@ function render() {
   ctx.lineWidth = 1;
   ctx.strokeStyle = "#111827";
 
-  const visibleCommands = drawCommands.filter((command) => isLayerVisible(command.layer));
+  const visibleCommands = drawCommands.filter((command) =>
+    isLayerVisible(layerVisibility, command.layer)
+  );
   for (const command of visibleCommands) {
     ctx.beginPath();
 
