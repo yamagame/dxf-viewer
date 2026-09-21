@@ -1,0 +1,21 @@
+{
+  "name": "dxf-loader",
+  "version": "1.0.0",
+  "description": "DXFファイルをブラウザ上で読み込んで表示するシンプルなWebアプリです。 ツールバーを上部に配置し、図面表示領域はウインドウ全体に広がります。",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "echo \"No tests configured\""
+  },
+  "keywords": [],
+  "type": "commonjs",
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "dxf-parser": "^1.1.2"
+  }
+}

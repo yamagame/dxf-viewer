@@ -5,12 +5,21 @@ DXFファイルをブラウザ上で読み込んで表示するシンプルなWe
 
 ## 使い方
 
-1. このディレクトリでローカルサーバーを起動
-2. ブラウザで `http://localhost:8000` を開く
-3. `DXF` ファイルを選択
+1. 依存関係をインストール
+2. 開発サーバーを起動
+3. ブラウザで表示されたURL（通常 `http://localhost:5173`）を開く
+4. `DXF` ファイルを選択
 
 ```bash
-python3 -m http.server 8000
+npm install
+npm run dev
+```
+
+本番ビルド:
+
+```bash
+npm run build
+npm run preview
 ```
 
 ## ビュー操作
