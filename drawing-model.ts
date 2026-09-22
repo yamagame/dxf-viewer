@@ -15,24 +15,6 @@ export type ExtractedDrawData = {
   bounds: Bounds | null;
 };
 
-export function createDefaultLayerVisibility(layers: string[]): Map<string, boolean> {
-  const visibility = new Map<string, boolean>();
-  layers.forEach((layer) => visibility.set(layer, true));
-  return visibility;
-}
-
-export function isLayerVisible(layerVisibility: Map<string, boolean>, layerName: unknown): boolean {
-  if (!layerVisibility.size) return true;
-  return layerVisibility.get(normalizeLayerName(layerName)) !== false;
-}
-
-export function getVisibleSegments(
-  drawSegments: Segment[],
-  layerVisibility: Map<string, boolean>
-): Segment[] {
-  return drawSegments.filter((segment) => isLayerVisible(layerVisibility, segment.layer));
-}
-
 export function computeSelectableVertices(visibleSegments: Segment[]): Point[] {
   const vertices: Point[] = [];
   const vertexKeySet = new Set<string>();

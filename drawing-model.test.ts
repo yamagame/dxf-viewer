@@ -1,44 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  computeSelectableVertices,
-  createDefaultLayerVisibility,
-  extractDrawData,
-  getVisibleSegments,
-  isLayerVisible,
-  type DrawCommand,
-} from "./drawing-model";
+import { computeSelectableVertices, extractDrawData, type DrawCommand } from "./drawing-model";
 import type { Segment } from "./geometry";
 
 describe("drawing-model", () => {
-  it("creates visible map with all layers enabled", () => {
-    const visibility = createDefaultLayerVisibility(["A", "B"]);
-    expect(visibility.get("A")).toBe(true);
-    expect(visibility.get("B")).toBe(true);
-  });
-
-  it("checks visibility by layer map", () => {
-    const visibility = new Map<string, boolean>([
-      ["A", true],
-      ["B", false],
-    ]);
-    expect(isLayerVisible(visibility, "A")).toBe(true);
-    expect(isLayerVisible(visibility, "B")).toBe(false);
-  });
-
-  it("filters visible segments by layer visibility", () => {
-    const segments: Segment[] = [
-      { layer: "A", from: { x: 0, y: 0 }, to: { x: 10, y: 0 } },
-      { layer: "B", from: { x: 0, y: 0 }, to: { x: 0, y: 10 } },
-    ];
-    const visibility = new Map<string, boolean>([
-      ["A", true],
-      ["B", false],
-    ]);
-    const result = getVisibleSegments(segments, visibility);
-    expect(result).toHaveLength(1);
-    expect(result[0].layer).toBe("A");
-  });
-
   it("computes selectable vertices including intersections", () => {
     const segments: Segment[] = [
       { layer: "A", from: { x: 0, y: 0 }, to: { x: 10, y: 10 } },
