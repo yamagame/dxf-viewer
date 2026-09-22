@@ -1,5 +1,9 @@
 import type { Point } from "./geometry";
-import { JwwArchiveReader, JwwParseError } from "./jww-archive-reader";
+import {
+  JwwArchiveReader,
+  JwwParseError,
+  type JwwObjectTag,
+} from "./jww-archive-reader";
 
 export { JwwParseError };
 
@@ -10,6 +14,13 @@ const OLDEST_VERSION = 230;
 const EXTENDED_HEADER_VERSION = 300;
 // Ver.4.20 以降はヘッダに SXF 対応の拡張線色定義と拡張線種定義が入る。
 const SXF_HEADER_VERSION = 420;
+// Ver.3.51 以降は図形基底クラス CData が線幅 WORD を 1 つ余分に持つ。
+// ヘッダではなく図形側の分岐（jwwdoc.h CData::Serialize の nOldVersionSave >= 351）。
+const PEN_WIDTH_VERSION = 351;
+const LINE_CLASS_NAME = "CDataSen";
+const ARC_CLASS_NAME = "CDataEnko";
+// MFC の読み込み配列はインデックス 0 を NULL タグ用に予約する。
+const FIRST_LOAD_ARRAY_INDEX = 1;
 const LAYER_GROUP_COUNT = 16;
 const LAYER_COUNT = 16;
 const MAX_LAYER_STATE = 3;
@@ -78,7 +89,8 @@ export function parseJww(buffer: ArrayBuffer): JwwDocument {
   const archive = new JwwArchiveReader(buffer);
   archive.skip(SIGNATURE.length);
   const header = readHeader(archive);
-  return { header, entities: [], skippedCount: 0 };
+  const entities = readEntities(archive, header.version);
+  return { header, entities, skippedCount: 0 };
 }
 
 // ヘッダ項目の順序とバージョン分岐は jwdatafmt.txt（Jw_cad データ形式解説）と
@@ -268,6 +280,123 @@ function skipTextSettings(archive: JwwArchiveReader): void {
   skipDoubles(archive, 2); // 文字位置整理の行間、文字数
   skipDwords(archive, 1); // 文字基準点のずれ位置使用フラグ
   skipDoubles(archive, 6); // 文字基準点の横方向と縦方向のずれ位置
+}
+
+// 図形データリスト（m_DataList）。要素数 → オブジェクトタグ → クラス別フィールド
+// の順に並ぶ。ブロック定義リスト（m_DataListList）はこの直後だが読まない。
+function readEntities(
+  archive: JwwArchiveReader,
+  version: number
+): JwwEntity[] {
+  const count = archive.readCount();
+  const classNames = new Map<number, string>();
+  let nextLoadIndex = FIRST_LOAD_ARRAY_INDEX;
+  const entities: JwwEntity[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const offset = archive.offset;
+    const tag = archive.readObjectTag();
+    const className = resolveClassName(tag, classNames, offset);
+    if (tag.kind === "new-class") {
+      classNames.set(nextLoadIndex, className);
+      nextLoadIndex += 1;
+    }
+    // クラスに続く実体も読み込み配列の 1 枠を占める（MFC CArchive::ReadObject）。
+    nextLoadIndex += 1;
+    const entity = readEntity(archive, version, className, offset);
+    if (entity !== null) entities.push(entity);
+  }
+  return entities;
+}
+
+// 初出のクラス名を読み込み配列の番号で記録し、以降のタグ参照はその番号で引く。
+function resolveClassName(
+  tag: JwwObjectTag,
+  classNames: Map<number, string>,
+  offset: number
+): string {
+  if (tag.kind === "new-class") return tag.className;
+  if (tag.kind === "null") {
+    throw new JwwParseError("図形データリストのタグが空です", offset);
+  }
+  const className = classNames.get(tag.classIndex);
+  if (className === undefined) {
+    throw new JwwParseError(
+      `クラス参照 ${tag.classIndex} に対応する図形クラスがありません`,
+      offset
+    );
+  }
+  return className;
+}
+
+// 7 つの図形クラスはいずれも CData を先頭に持つので、基底を読んでから分岐する。
+// 線と円弧以外を消費して null を返す分岐はここに足す。
+function readEntity(
+  archive: JwwArchiveReader,
+  version: number,
+  className: string,
+  offset: number
+): JwwEntity | null {
+  const address = readEntityBase(archive, version);
+  if (className === LINE_CLASS_NAME) return readLine(archive, address);
+  if (className === ARC_CLASS_NAME) return readArc(archive, address);
+  throw new JwwParseError(`図形クラス ${className} は読み取れません`, offset);
+}
+
+// 図形データの基底クラス CData（jwdatafmt.txt / jwwdoc.h CData::Serialize）。
+function readEntityBase(
+  archive: JwwArchiveReader,
+  version: number
+): JwwLayerAddress {
+  archive.readDword(); // 曲線属性番号
+  archive.readByte(); // 線種番号
+  archive.readWord(); // 線色番号
+  if (version >= PEN_WIDTH_VERSION) {
+    archive.readWord(); // 線幅
+  }
+  const layer = archive.readWord();
+  const group = archive.readWord();
+  archive.readWord(); // 属性フラグ
+  return { group, layer };
+}
+
+function readLine(
+  archive: JwwArchiveReader,
+  address: JwwLayerAddress
+): JwwLineEntity {
+  const from = readPoint(archive);
+  const to = readPoint(archive);
+  return { type: "line", address, from, to };
+}
+
+// 角度はラジアン、座標と半径はファイル内の値をそのまま持つ（換算しない）。
+function readArc(
+  archive: JwwArchiveReader,
+  address: JwwLayerAddress
+): JwwArcEntity {
+  const center = readPoint(archive);
+  const radius = archive.readDouble();
+  const startAngle = archive.readDouble();
+  const sweepAngle = archive.readDouble();
+  const tiltAngle = archive.readDouble();
+  const flatness = archive.readDouble();
+  const fullCircle = archive.readDword() !== 0;
+  return {
+    type: "arc",
+    address,
+    center,
+    radius,
+    startAngle,
+    sweepAngle,
+    tiltAngle,
+    flatness,
+    fullCircle,
+  };
+}
+
+function readPoint(archive: JwwArchiveReader): Point {
+  const x = archive.readDouble();
+  const y = archive.readDouble();
+  return { x, y };
 }
 
 function skipDwords(archive: JwwArchiveReader, count: number): void {

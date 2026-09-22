@@ -243,6 +243,37 @@ type SyntheticLayerGroup = {
   layers?: SyntheticLayer[];
 };
 
+type SyntheticLine = {
+  type: "line";
+  layer?: number;
+  group?: number;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+};
+
+type SyntheticArc = {
+  type: "arc";
+  layer?: number;
+  group?: number;
+  center: { x: number; y: number };
+  radius: number;
+  startAngle: number;
+  sweepAngle: number;
+  tiltAngle?: number;
+  flatness?: number;
+  fullCircle?: boolean;
+};
+
+type SyntheticOtherEntity = {
+  type: "other";
+  className: string;
+  layer?: number;
+  group?: number;
+  body?: number[];
+};
+
+type SyntheticEntity = SyntheticLine | SyntheticArc | SyntheticOtherEntity;
+
 type SyntheticJwwFile = {
   signature?: string;
   version?: number;
@@ -250,7 +281,9 @@ type SyntheticJwwFile = {
   drawingSize?: number;
   writeGroup?: number;
   groups?: SyntheticLayerGroup[];
-  rest?: number[];
+  entities?: SyntheticEntity[];
+  rawEntityList?: number[];
+  trailing?: number[];
 };
 
 const LAYER_GROUP_COUNT = 16;
@@ -270,6 +303,8 @@ const VERSION_351_HEADER_BYTES = 4337;
 const VERSION_230_HEADER_BYTES = 4137;
 // The header's last item is the six doubles of text base point offsets.
 const TEXT_BASE_POINT_OFFSET_BYTES = 48;
+// An empty figure list is the element count word on its own.
+const EMPTY_ENTITY_LIST_BYTES = 2;
 
 function cstring(bytes: number[]): number[] {
   return [bytes.length, ...bytes];
@@ -407,12 +442,94 @@ function headerRemainderBytes(file: SyntheticJwwFile): number[] {
   return bytes;
 }
 
-// Assembles a synthetic JWW file. Unspecified fields take defaults, and `rest`
-// is the seam where the entity list is appended.
+function entityClassName(entity: SyntheticEntity): string {
+  if (entity.type === "line") return "CDataSen";
+  if (entity.type === "arc") return "CDataEnko";
+  return entity.className;
+}
+
+// The CData base every figure class starts with. The line width word only
+// exists from Ver.3.51 on (jwwdoc.h CData::Serialize).
+function entityBaseBytes(entity: SyntheticEntity, version: number): number[] {
+  const bytes = [
+    ...u32(0), // 曲線属性番号
+    1, // 線種番号
+    ...u16(1), // 線色番号
+  ];
+  if (version >= 351) {
+    bytes.push(...u16(1)); // 線幅
+  }
+  bytes.push(
+    ...u16(entity.layer ?? 0), // レイヤ番号
+    ...u16(entity.group ?? 0), // レイヤグループ番号
+    ...u16(0) // 属性フラグ
+  );
+  return bytes;
+}
+
+function entityBodyBytes(entity: SyntheticEntity): number[] {
+  if (entity.type === "line") {
+    return [
+      ...f64(entity.from.x),
+      ...f64(entity.from.y),
+      ...f64(entity.to.x),
+      ...f64(entity.to.y),
+    ];
+  }
+  if (entity.type === "arc") {
+    return [
+      ...f64(entity.center.x),
+      ...f64(entity.center.y),
+      ...f64(entity.radius),
+      ...f64(entity.startAngle),
+      ...f64(entity.sweepAngle),
+      ...f64(entity.tiltAngle ?? 0),
+      ...f64(entity.flatness ?? 1),
+      ...u32(entity.fullCircle === true ? 1 : 0),
+    ];
+  }
+  return entity.body ?? [];
+}
+
+// The MFC object tags of the figure list. A class is registered in the load
+// array the first time it appears, and the object that follows takes the next
+// slot, so index 0 stays reserved for the null tag.
+function entityListBytes(
+  entities: SyntheticEntity[],
+  version: number
+): number[] {
+  const classIndexes = new Map<string, number>();
+  let nextIndex = 1;
+  const bytes = [...u16(entities.length)];
+  for (const entity of entities) {
+    const className = entityClassName(entity);
+    const registered = classIndexes.get(className);
+    if (registered === undefined) {
+      classIndexes.set(className, nextIndex);
+      nextIndex += 1;
+      bytes.push(
+        ...u16(0xffff),
+        ...u16(1),
+        ...u16(className.length),
+        ...ascii(className)
+      );
+    } else {
+      bytes.push(...u16(0x8000 | registered));
+    }
+    nextIndex += 1;
+    bytes.push(...entityBaseBytes(entity, version), ...entityBodyBytes(entity));
+  }
+  return bytes;
+}
+
+// Assembles a synthetic JWW file. Unspecified fields take defaults: the figure
+// list is an empty one, `rawEntityList` replaces it with literal bytes, and
+// `trailing` stands in for the block definition list that follows it.
 function buildJwwFile(file: SyntheticJwwFile = {}): ArrayBuffer {
+  const version = file.version ?? 700;
   const bytes = [
     ...ascii(file.signature ?? "JwwData."),
-    ...u32(file.version ?? 700),
+    ...u32(version),
     ...cstring(file.memo ?? []),
     ...u32(file.drawingSize ?? 1),
     ...u32(file.writeGroup ?? 0),
@@ -421,7 +538,10 @@ function buildJwwFile(file: SyntheticJwwFile = {}): ArrayBuffer {
     bytes.push(...layerGroupBytes(file.groups?.[index] ?? {}));
   }
   bytes.push(...headerRemainderBytes(file));
-  bytes.push(...(file.rest ?? []));
+  bytes.push(
+    ...(file.rawEntityList ?? entityListBytes(file.entities ?? [], version))
+  );
+  bytes.push(...(file.trailing ?? []));
   return new Uint8Array(bytes).buffer;
 }
 
@@ -595,7 +715,9 @@ describe("parseJww", () => {
 
   it("ends the header walk at the first byte of the entity list", () => {
     const header = buildJwwFile();
-    expect(header.byteLength).toBe(VERSION_700_HEADER_BYTES);
+    expect(header.byteLength).toBe(
+      VERSION_700_HEADER_BYTES + EMPTY_ENTITY_LIST_BYTES
+    );
     expect(parseJww(header).header.version).toBe(700);
 
     try {
@@ -609,28 +731,329 @@ describe("parseJww", () => {
     }
   });
 
-  it("leaves the entity list that follows the header unread", () => {
+  it("reads the start and end point of a line from the entity list", () => {
     const document = parseJww(
       buildJwwFile({
         groups: [{ name: CP932_HEIMENZU }],
-        rest: [
-          ...u16(2),
-          ...u16(0xffff),
-          ...u16(0),
-          ...u16(8),
-          ...ascii("CDataSen"),
-        ],
+        entities: [{ type: "line", from: { x: 0, y: 0 }, to: { x: 3, y: 4 } }],
       })
     );
 
     expect(document.header.groups[0].name).toContain("平面図");
-    expect(document.entities).toEqual([]);
-    expect(document.skippedCount).toBe(0);
+    expect(document.entities).toHaveLength(1);
+    const line = document.entities[0];
+    expect(line.type).toBe("line");
+    if (line.type !== "line") return;
+    expect(line.from.x).toBeCloseTo(0, 6);
+    expect(line.from.y).toBeCloseTo(0, 6);
+    expect(line.to.x).toBeCloseTo(3, 6);
+    expect(line.to.y).toBeCloseTo(4, 6);
+  });
+
+  it("reads the center, radius and angles of an arc from the entity list", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [
+          {
+            type: "arc",
+            center: { x: -12.5, y: 7.25 },
+            radius: 40,
+            startAngle: 0.25,
+            sweepAngle: 1.5,
+            tiltAngle: 0.75,
+            flatness: 0.5,
+          },
+        ],
+      })
+    );
+
+    expect(document.entities).toHaveLength(1);
+    const arc = document.entities[0];
+    expect(arc.type).toBe("arc");
+    if (arc.type !== "arc") return;
+    expect(arc.center.x).toBeCloseTo(-12.5, 6);
+    expect(arc.center.y).toBeCloseTo(7.25, 6);
+    expect(arc.radius).toBeCloseTo(40, 6);
+    expect(arc.startAngle).toBeCloseTo(0.25, 6);
+    expect(arc.sweepAngle).toBeCloseTo(1.5, 6);
+    expect(arc.tiltAngle).toBeCloseTo(0.75, 6);
+    expect(arc.flatness).toBeCloseTo(0.5, 6);
+    expect(arc.fullCircle).toBe(false);
+  });
+
+  it("reads a full circle as an arc whose full circle flag is set", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [
+          {
+            type: "arc",
+            center: { x: 5, y: 5 },
+            radius: 2.5,
+            startAngle: 0,
+            sweepAngle: 6.283185307179586,
+            fullCircle: true,
+          },
+        ],
+      })
+    );
+
+    const arc = document.entities[0];
+    expect(arc.type).toBe("arc");
+    if (arc.type !== "arc") return;
+    expect(arc.radius).toBeCloseTo(2.5, 6);
+    expect(arc.sweepAngle).toBeCloseTo(6.283185307179586, 6);
+    expect(arc.flatness).toBeCloseTo(1, 6);
+    expect(arc.fullCircle).toBe(true);
+  });
+
+  it("keeps the layer address each entity was written with", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [
+          {
+            type: "line",
+            group: 0,
+            layer: 3,
+            from: { x: 0, y: 0 },
+            to: { x: 10, y: 0 },
+          },
+          {
+            type: "arc",
+            group: 15,
+            layer: 12,
+            center: { x: 1, y: 1 },
+            radius: 5,
+            startAngle: 0,
+            sweepAngle: 1,
+          },
+        ],
+      })
+    );
+
+    expect(document.entities[0].address).toEqual({ group: 0, layer: 3 });
+    expect(document.entities[1].address).toEqual({ group: 15, layer: 12 });
+  });
+
+  it("reads lines and arcs that repeat their class through a tag reference", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [
+          { type: "line", from: { x: 0, y: 0 }, to: { x: 1, y: 0 } },
+          {
+            type: "arc",
+            center: { x: 2, y: 0 },
+            radius: 1,
+            startAngle: 0,
+            sweepAngle: 3,
+          },
+          { type: "line", from: { x: 0, y: 5 }, to: { x: 1, y: 5 } },
+          {
+            type: "arc",
+            center: { x: 2, y: 5 },
+            radius: 4,
+            startAngle: 0,
+            sweepAngle: 3,
+          },
+        ],
+      })
+    );
+
+    expect(document.entities.map((entity) => entity.type)).toEqual([
+      "line",
+      "arc",
+      "line",
+      "arc",
+    ]);
+    const thirdEntity = document.entities[2];
+    const fourthEntity = document.entities[3];
+    expect(thirdEntity.type).toBe("line");
+    expect(fourthEntity.type).toBe("arc");
+    if (thirdEntity.type !== "line" || fourthEntity.type !== "arc") return;
+    expect(thirdEntity.from.y).toBeCloseTo(5, 6);
+    expect(fourthEntity.radius).toBeCloseTo(4, 6);
+  });
+
+  // The load array a class reference indexes counts objects as well as
+  // classes, so the second class name of the file lands on index 3: index 1
+  // holds CDataSen, index 2 the line that followed it, and index 4 the arc.
+  it("resolves a class reference against the load array slot of its class", () => {
+    const document = parseJww(
+      buildJwwFile({
+        rawEntityList: [
+          ...u16(3),
+          ...u16(0xffff),
+          ...u16(1),
+          ...u16(8),
+          ...ascii("CDataSen"),
+          ...u32(0),
+          1,
+          ...u16(1),
+          ...u16(1),
+          ...u16(2),
+          ...u16(1),
+          ...u16(0),
+          ...f64(0),
+          ...f64(0),
+          ...f64(6),
+          ...f64(8),
+          ...u16(0xffff),
+          ...u16(1),
+          ...u16(9),
+          ...ascii("CDataEnko"),
+          ...u32(0),
+          1,
+          ...u16(1),
+          ...u16(1),
+          ...u16(4),
+          ...u16(3),
+          ...u16(0),
+          ...f64(1),
+          ...f64(2),
+          ...f64(9),
+          ...f64(0),
+          ...f64(1),
+          ...f64(0),
+          ...f64(1),
+          ...u32(0),
+          ...u16(0x8003),
+          ...u32(0),
+          1,
+          ...u16(1),
+          ...u16(1),
+          ...u16(5),
+          ...u16(3),
+          ...u16(0),
+          ...f64(3),
+          ...f64(4),
+          ...f64(7),
+          ...f64(0),
+          ...f64(1),
+          ...f64(0),
+          ...f64(1),
+          ...u32(0),
+        ],
+      })
+    );
+
+    expect(document.entities.map((entity) => entity.type)).toEqual([
+      "line",
+      "arc",
+      "arc",
+    ]);
+    expect(document.entities[0].address).toEqual({ group: 1, layer: 2 });
+    expect(document.entities[2].address).toEqual({ group: 3, layer: 5 });
+    const referenced = document.entities[2];
+    if (referenced.type !== "arc") return;
+    expect(referenced.center.x).toBeCloseTo(3, 6);
+    expect(referenced.center.y).toBeCloseTo(4, 6);
+    expect(referenced.radius).toBeCloseTo(7, 6);
+  });
+
+  it("throws a parse error when a class reference names an unregistered slot", () => {
+    try {
+      parseJww(
+        buildJwwFile({
+          rawEntityList: [...u16(1), ...u16(0x8007)],
+        })
+      );
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JwwParseError);
+      expect((error as JwwParseError).message).toContain("クラス参照");
+    }
+  });
+
+  it("throws a parse error when the entity list names a class it cannot read", () => {
+    try {
+      parseJww(
+        buildJwwFile({
+          entities: [{ type: "other", className: "CNotAFigure" }],
+        })
+      );
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JwwParseError);
+      expect((error as JwwParseError).message).toContain("CNotAFigure");
+    }
+  });
+
+  it("reads a line from a version 351 file, whose entities carry a line width", () => {
+    const document = parseJww(
+      buildJwwFile({
+        version: 351,
+        entities: [
+          {
+            type: "line",
+            group: 2,
+            layer: 6,
+            from: { x: 1.5, y: 2.5 },
+            to: { x: 3.5, y: 4.5 },
+          },
+        ],
+      })
+    );
+
+    const line = document.entities[0];
+    expect(line.type).toBe("line");
+    if (line.type !== "line") return;
+    expect(line.address).toEqual({ group: 2, layer: 6 });
+    expect(line.from.x).toBeCloseTo(1.5, 6);
+    expect(line.from.y).toBeCloseTo(2.5, 6);
+    expect(line.to.x).toBeCloseTo(3.5, 6);
+    expect(line.to.y).toBeCloseTo(4.5, 6);
+  });
+
+  it("reads a line from a version 230 file, whose entities carry no line width", () => {
+    const document = parseJww(
+      buildJwwFile({
+        version: 230,
+        entities: [
+          {
+            type: "line",
+            group: 2,
+            layer: 6,
+            from: { x: 1.5, y: 2.5 },
+            to: { x: 3.5, y: 4.5 },
+          },
+        ],
+      })
+    );
+
+    const line = document.entities[0];
+    expect(line.type).toBe("line");
+    if (line.type !== "line") return;
+    expect(line.address).toEqual({ group: 2, layer: 6 });
+    expect(line.from.x).toBeCloseTo(1.5, 6);
+    expect(line.from.y).toBeCloseTo(2.5, 6);
+    expect(line.to.x).toBeCloseTo(3.5, 6);
+    expect(line.to.y).toBeCloseTo(4.5, 6);
+  });
+
+  it("stops at the end of the entity list and leaves the block definition list unread", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [{ type: "line", from: { x: 0, y: 0 }, to: { x: 1, y: 1 } }],
+        trailing: [
+          ...u16(0xffff),
+          ...u16(1),
+          ...u16(9),
+          ...ascii("CDataList"),
+          0xff,
+          0xff,
+          0xff,
+        ],
+      })
+    );
+
+    expect(document.entities).toHaveLength(1);
+    expect(document.entities[0].type).toBe("line");
   });
 
   it("omits the extended color and line type definitions below version 420", () => {
     const header = buildJwwFile({ version: 351 });
-    expect(header.byteLength).toBe(VERSION_351_HEADER_BYTES);
+    expect(header.byteLength).toBe(
+      VERSION_351_HEADER_BYTES + EMPTY_ENTITY_LIST_BYTES
+    );
     expect(parseJww(header).header.version).toBe(351);
 
     try {
@@ -646,7 +1069,9 @@ describe("parseJww", () => {
 
   it("omits the sky view, the extended mark jumps and the text draw state below version 300", () => {
     const header = buildJwwFile({ version: 230 });
-    expect(header.byteLength).toBe(VERSION_230_HEADER_BYTES);
+    expect(header.byteLength).toBe(
+      VERSION_230_HEADER_BYTES + EMPTY_ENTITY_LIST_BYTES
+    );
     expect(parseJww(header).header.version).toBe(230);
 
     try {
