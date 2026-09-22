@@ -1,5 +1,5 @@
 import { normalizeLayerName, type Segment } from "./geometry";
-import type { DrawCommand } from "./drawing-model";
+import type { DrawCommand, DrawingLayer } from "./drawing-model";
 
 export class LayerController {
   private layerNames: string[] = [];
@@ -10,11 +10,11 @@ export class LayerController {
     this.visibility = new Map();
   }
 
-  setLayers(layers: string[]): void {
-    this.layerNames = [...layers];
+  setLayers(layers: DrawingLayer[]): void {
+    this.layerNames = layers.map((layer) => layer.name);
     this.visibility = new Map();
-    this.layerNames.forEach((layer) => {
-      this.visibility.set(layer, true);
+    layers.forEach((layer) => {
+      this.visibility.set(layer.name, layer.visible);
     });
   }
 

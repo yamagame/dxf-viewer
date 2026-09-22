@@ -2,22 +2,68 @@ import { describe, expect, it } from "vitest";
 import { LayerController } from "./layer-controller";
 import { MeasurementManager } from "./measurement-manager";
 import { EdgeSelectionManager } from "./edge-selection-manager";
+import type { DrawCommand } from "./drawing-model";
 import type { Segment } from "./geometry";
 
 describe("LayerController", () => {
+  const segments: Segment[] = [
+    { layer: "A", from: { x: 0, y: 0 }, to: { x: 1, y: 0 } },
+    { layer: "B", from: { x: 0, y: 0 }, to: { x: 0, y: 1 } },
+  ];
+  const commands: DrawCommand[] = [
+    { type: "line", layer: "A", from: { x: 0, y: 0 }, to: { x: 1, y: 0 } },
+    { type: "line", layer: "B", from: { x: 0, y: 0 }, to: { x: 0, y: 1 } },
+  ];
+
   it("toggles layer visibility and filters items", () => {
     const controller = new LayerController();
-    controller.setLayers(["A", "B"]);
+    controller.setLayers([
+      { name: "A", visible: true },
+      { name: "B", visible: true },
+    ]);
     controller.setVisible("B", false);
-
-    const segments: Segment[] = [
-      { layer: "A", from: { x: 0, y: 0 }, to: { x: 1, y: 0 } },
-      { layer: "B", from: { x: 0, y: 0 }, to: { x: 0, y: 1 } },
-    ];
 
     expect(controller.filterVisibleSegments(segments)).toHaveLength(1);
     expect(controller.isVisible("A")).toBe(true);
     expect(controller.isVisible("B")).toBe(false);
+  });
+
+  it("keeps a layer given as initially invisible hidden from drawing and segments", () => {
+    const controller = new LayerController();
+    controller.setLayers([
+      { name: "A", visible: true },
+      { name: "B", visible: false },
+    ]);
+
+    expect(controller.getLayerNames()).toEqual(["A", "B"]);
+    expect(controller.isVisible("B")).toBe(false);
+    expect(controller.filterVisibleSegments(segments)).toHaveLength(1);
+    expect(controller.filterVisibleCommands(commands)).toHaveLength(1);
+  });
+
+  it("restores an initially invisible layer once it is switched to visible", () => {
+    const controller = new LayerController();
+    controller.setLayers([
+      { name: "A", visible: true },
+      { name: "B", visible: false },
+    ]);
+    controller.setVisible("B", true);
+
+    expect(controller.isVisible("B")).toBe(true);
+    expect(controller.filterVisibleSegments(segments)).toHaveLength(2);
+    expect(controller.filterVisibleCommands(commands)).toHaveLength(2);
+  });
+
+  it("lists every layer even when all of them start invisible", () => {
+    const controller = new LayerController();
+    controller.setLayers([
+      { name: "A", visible: false },
+      { name: "B", visible: false },
+    ]);
+
+    expect(controller.getLayerNames()).toEqual(["A", "B"]);
+    expect(controller.filterVisibleCommands(commands)).toHaveLength(0);
+    expect(controller.filterVisibleSegments(segments)).toHaveLength(0);
   });
 });
 

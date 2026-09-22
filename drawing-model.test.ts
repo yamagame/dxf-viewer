@@ -32,7 +32,10 @@ describe("drawing-model", () => {
       },
     ];
     const result = extractDrawData(entities);
-    expect(result.layers).toEqual(["L1", "L2"]);
+    expect(result.layers).toEqual([
+      { name: "L1", visible: true },
+      { name: "L2", visible: true },
+    ]);
     expect(result.bounds).toEqual({ minX: 0, minY: 0, maxX: 10, maxY: 7 });
     expect(result.segments).toHaveLength(1);
     expect((result.commands[0] as DrawCommand).type).toBe("line");

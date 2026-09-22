@@ -8,10 +8,12 @@ export type DrawCommand =
 
 export type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
 
+export type DrawingLayer = { name: string; visible: boolean };
+
 export type ExtractedDrawData = {
   commands: DrawCommand[];
   segments: Segment[];
-  layers: string[];
+  layers: DrawingLayer[];
   bounds: Bounds | null;
 };
 
@@ -151,7 +153,9 @@ export function extractDrawData(entities: any[]): ExtractedDrawData {
   return {
     commands,
     segments,
-    layers: Array.from(layersSet).sort((a, b) => a.localeCompare(b)),
+    layers: Array.from(layersSet)
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => ({ name, visible: true })),
     bounds: { minX, minY, maxX, maxY },
   };
 }
