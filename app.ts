@@ -402,7 +402,9 @@ class DxfViewerApp {
       this.render();
       return;
     }
-    this.measureInfoEl.textContent = this.measurementManager.selectPoint(nearestVertex);
+    this.measureInfoEl.textContent = event.altKey
+      ? this.measurementManager.advanceSecondPoint(nearestVertex)
+      : this.measurementManager.selectPoint(nearestVertex);
     this.render();
   };
 

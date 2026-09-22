@@ -30,6 +30,16 @@ describe("MeasurementManager", () => {
     expect(msg).toContain("ΔX: 3.000");
     expect(msg).toContain("ΔY: 4.000");
   });
+
+  it("advances second point to first, then sets new second point", () => {
+    const manager = new MeasurementManager();
+    manager.selectPoint({ x: 0, y: 0 });
+    manager.selectPoint({ x: 3, y: 4 });
+    const msg = manager.advanceSecondPoint({ x: 6, y: 8 });
+    expect(msg).toContain("距離: 5.000");
+    expect(msg).toContain("ΔX: 3.000");
+    expect(msg).toContain("ΔY: 4.000");
+  });
 });
 
 describe("EdgeSelectionManager", () => {
