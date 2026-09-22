@@ -243,18 +243,23 @@ type SyntheticLayerGroup = {
   layers?: SyntheticLayer[];
 };
 
-type SyntheticLine = {
-  type: "line";
+// 図形クラスに共通する CData 基底のフィールド。線種番号と線色番号は点と
+// ソリッドの条件付きフィールドを左右するため、図形ごとに指定できるようにする。
+type SyntheticDataBase = {
   layer?: number;
   group?: number;
+  penStyle?: number;
+  penColor?: number;
+};
+
+type SyntheticLine = SyntheticDataBase & {
+  type: "line";
   from: { x: number; y: number };
   to: { x: number; y: number };
 };
 
-type SyntheticArc = {
+type SyntheticArc = SyntheticDataBase & {
   type: "arc";
-  layer?: number;
-  group?: number;
   center: { x: number; y: number };
   radius: number;
   startAngle: number;
@@ -264,15 +269,52 @@ type SyntheticArc = {
   fullCircle?: boolean;
 };
 
-type SyntheticOtherEntity = {
+// 線種番号が 100 のときだけ点コード・回転角・倍率が続く（jwwdoc.h CDataTen）。
+type SyntheticPoint = SyntheticDataBase & {
+  type: "point";
+  at: { x: number; y: number };
+  code?: number;
+};
+
+type SyntheticText = SyntheticDataBase & {
+  type: "text";
+  fontName?: number[];
+  text?: number[];
+};
+
+// 線メンバと文字メンバを持ち、Ver.4.20 以降は SXF モードと補助線 2・点 4 が続く
+// （jwwdoc.h CDataSunpou）。入れ子のメンバもそれぞれ CData 基底を持つ。
+type SyntheticDimension = SyntheticDataBase & {
+  type: "dimension";
+  text?: number[];
+  arrowPenStyle?: number;
+};
+
+// 線色番号が 10 のときだけ任意色の RGB 値が続く（jwwdoc.h CDataSolid）。
+type SyntheticSolid = SyntheticDataBase & {
+  type: "solid";
+};
+
+type SyntheticBlockReference = SyntheticDataBase & {
+  type: "block-ref";
+  definitionNumber?: number;
+};
+
+type SyntheticOtherEntity = SyntheticDataBase & {
   type: "other";
   className: string;
-  layer?: number;
-  group?: number;
   body?: number[];
 };
 
-type SyntheticEntity = SyntheticLine | SyntheticArc | SyntheticOtherEntity;
+type SyntheticEntity =
+  | SyntheticLine
+  | SyntheticArc
+  | SyntheticPoint
+  | SyntheticText
+  | SyntheticDimension
+  | SyntheticSolid
+  | SyntheticBlockReference
+  | SyntheticOtherEntity;
 
 type SyntheticJwwFile = {
   signature?: string;
@@ -445,49 +487,147 @@ function headerRemainderBytes(file: SyntheticJwwFile): number[] {
 function entityClassName(entity: SyntheticEntity): string {
   if (entity.type === "line") return "CDataSen";
   if (entity.type === "arc") return "CDataEnko";
+  if (entity.type === "point") return "CDataTen";
+  if (entity.type === "text") return "CDataMoji";
+  if (entity.type === "dimension") return "CDataSunpou";
+  if (entity.type === "solid") return "CDataSolid";
+  if (entity.type === "block-ref") return "CDataBlock";
   return entity.className;
 }
 
 // The CData base every figure class starts with. The line width word only
 // exists from Ver.3.51 on (jwwdoc.h CData::Serialize).
-function entityBaseBytes(entity: SyntheticEntity, version: number): number[] {
+function dataBaseBytes(base: SyntheticDataBase, version: number): number[] {
   const bytes = [
     ...u32(0), // 曲線属性番号
-    1, // 線種番号
-    ...u16(1), // 線色番号
+    base.penStyle ?? 1, // 線種番号
+    ...u16(base.penColor ?? 1), // 線色番号
   ];
   if (version >= 351) {
     bytes.push(...u16(1)); // 線幅
   }
   bytes.push(
-    ...u16(entity.layer ?? 0), // レイヤ番号
-    ...u16(entity.group ?? 0), // レイヤグループ番号
+    ...u16(base.layer ?? 0), // レイヤ番号
+    ...u16(base.group ?? 0), // レイヤグループ番号
     ...u16(0) // 属性フラグ
   );
   return bytes;
 }
 
-function entityBodyBytes(entity: SyntheticEntity): number[] {
-  if (entity.type === "line") {
-    return [
-      ...f64(entity.from.x),
-      ...f64(entity.from.y),
-      ...f64(entity.to.x),
-      ...f64(entity.to.y),
-    ];
+function lineBodyBytes(line: SyntheticLine): number[] {
+  return [
+    ...f64(line.from.x),
+    ...f64(line.from.y),
+    ...f64(line.to.x),
+    ...f64(line.to.y),
+  ];
+}
+
+function arcBodyBytes(arc: SyntheticArc): number[] {
+  return [
+    ...f64(arc.center.x),
+    ...f64(arc.center.y),
+    ...f64(arc.radius),
+    ...f64(arc.startAngle),
+    ...f64(arc.sweepAngle),
+    ...f64(arc.tiltAngle ?? 0),
+    ...f64(arc.flatness ?? 1),
+    ...u32(arc.fullCircle === true ? 1 : 0),
+  ];
+}
+
+function pointBodyBytes(point: {
+  penStyle?: number;
+  at: { x: number; y: number };
+  code?: number;
+}): number[] {
+  const bytes = [
+    ...f64(point.at.x),
+    ...f64(point.at.y),
+    ...u32(0), // 仮点フラグ
+  ];
+  if (point.penStyle === 100) {
+    bytes.push(
+      ...u32(point.code ?? 0), // 点コード
+      ...f64(0), // 回転角
+      ...f64(1) // 倍率
+    );
   }
-  if (entity.type === "arc") {
-    return [
-      ...f64(entity.center.x),
-      ...f64(entity.center.y),
-      ...f64(entity.radius),
-      ...f64(entity.startAngle),
-      ...f64(entity.sweepAngle),
-      ...f64(entity.tiltAngle ?? 0),
-      ...f64(entity.flatness ?? 1),
-      ...u32(entity.fullCircle === true ? 1 : 0),
-    ];
+  return bytes;
+}
+
+function textBodyBytes(text: {
+  fontName?: number[];
+  text?: number[];
+}): number[] {
+  return [
+    ...f64(0), // 始点 x
+    ...f64(0), // 始点 y
+    ...f64(1), // 終点 x
+    ...f64(0), // 終点 y
+    ...u32(3), // 文字種
+    ...f64(2), // 文字サイズ横
+    ...f64(3), // 文字サイズ縦
+    ...f64(0), // 文字間隔
+    ...f64(0), // 角度
+    ...cstring(text.fontName ?? []),
+    ...cstring(text.text ?? []),
+  ];
+}
+
+function solidBodyBytes(solid: SyntheticSolid): number[] {
+  const bytes = [...zeroDoubles(8)]; // 4 点の x, y
+  if (solid.penColor === 10) {
+    bytes.push(...u32(0x00ff8040)); // 任意色の RGB 値
   }
+  return bytes;
+}
+
+function blockReferenceBodyBytes(block: SyntheticBlockReference): number[] {
+  return [
+    ...f64(0), // 基準点 x
+    ...f64(0), // 基準点 y
+    ...f64(1), // 倍率 x
+    ...f64(1), // 倍率 y
+    ...f64(0), // 回転角
+    ...u32(block.definitionNumber ?? 0),
+  ];
+}
+
+function dimensionBodyBytes(
+  dimension: SyntheticDimension,
+  version: number
+): number[] {
+  const bytes = [
+    ...dataBaseBytes({}, version),
+    ...zeroDoubles(4), // 線分メンバの始点と終点
+    ...dataBaseBytes({}, version),
+    ...textBodyBytes({ text: dimension.text }), // 文字メンバ
+  ];
+  if (version < 420) return bytes;
+  bytes.push(...u16(1)); // SXF のモード
+  for (let index = 0; index < 2; index += 1) {
+    bytes.push(...dataBaseBytes({}, version), ...zeroDoubles(4)); // 補助線
+  }
+  const arrow = { penStyle: dimension.arrowPenStyle, at: { x: 0, y: 0 }, code: 5 };
+  for (let index = 0; index < 2; index += 1) {
+    bytes.push(...dataBaseBytes(arrow, version), ...pointBodyBytes(arrow)); // 矢印
+  }
+  for (let index = 0; index < 2; index += 1) {
+    const origin = { at: { x: 0, y: 0 } };
+    bytes.push(...dataBaseBytes({}, version), ...pointBodyBytes(origin)); // 基準点
+  }
+  return bytes;
+}
+
+function entityBodyBytes(entity: SyntheticEntity, version: number): number[] {
+  if (entity.type === "line") return lineBodyBytes(entity);
+  if (entity.type === "arc") return arcBodyBytes(entity);
+  if (entity.type === "point") return pointBodyBytes(entity);
+  if (entity.type === "text") return textBodyBytes(entity);
+  if (entity.type === "dimension") return dimensionBodyBytes(entity, version);
+  if (entity.type === "solid") return solidBodyBytes(entity);
+  if (entity.type === "block-ref") return blockReferenceBodyBytes(entity);
   return entity.body ?? [];
 }
 
@@ -517,7 +657,10 @@ function entityListBytes(
       bytes.push(...u16(0x8000 | registered));
     }
     nextIndex += 1;
-    bytes.push(...entityBaseBytes(entity, version), ...entityBodyBytes(entity));
+    bytes.push(
+      ...dataBaseBytes(entity, version),
+      ...entityBodyBytes(entity, version)
+    );
   }
   return bytes;
 }
@@ -954,6 +1097,9 @@ describe("parseJww", () => {
       parseJww(
         buildJwwFile({
           rawEntityList: [...u16(1), ...u16(0x8007)],
+          // 1 件分のバイト数（タグ 2 + CData 基底 15）を満たし、要素数の検査では
+          // なくクラス参照の解決で失敗することを確かめる。
+          trailing: zeroBytes(15),
         })
       );
       expect.unreachable();
@@ -1098,6 +1244,187 @@ describe("parseJww", () => {
       expect(error).toBeInstanceOf(JwwParseError);
       expect((error as JwwParseError).offset).toBe(41);
       expect((error as JwwParseError).message).toContain("バイト位置 41");
+    }
+  });
+
+  it("consumes the unsupported figure classes placed between two lines", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [
+          {
+            type: "line",
+            group: 1,
+            layer: 2,
+            from: { x: 0, y: 0 },
+            to: { x: 10, y: 0 },
+          },
+          { type: "point", at: { x: 1, y: 2 } },
+          { type: "text", fontName: ascii("MS Gothic"), text: CP932_HEIMENZU },
+          { type: "dimension", text: CP932_TATEGU },
+          { type: "solid" },
+          { type: "block-ref", definitionNumber: 4 },
+          {
+            type: "line",
+            group: 3,
+            layer: 4,
+            from: { x: 0, y: 5 },
+            to: { x: 10, y: 5 },
+          },
+        ],
+      })
+    );
+
+    expect(document.entities.map((entity) => entity.type)).toEqual([
+      "line",
+      "line",
+    ]);
+    const second = document.entities[1];
+    expect(second.type).toBe("line");
+    if (second.type !== "line") return;
+    expect(second.address).toEqual({ group: 3, layer: 4 });
+    expect(second.from.x).toBeCloseTo(0, 6);
+    expect(second.from.y).toBeCloseTo(5, 6);
+    expect(second.to.x).toBeCloseTo(10, 6);
+    expect(second.to.y).toBeCloseTo(5, 6);
+  });
+
+  it("counts the consumed figures without adding them to the entities", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [
+          { type: "text", text: CP932_HEIMENZU },
+          { type: "line", from: { x: 0, y: 0 }, to: { x: 1, y: 1 } },
+          { type: "text", text: CP932_TATEGU },
+          { type: "block-ref" },
+          {
+            type: "arc",
+            center: { x: 0, y: 0 },
+            radius: 2,
+            startAngle: 0,
+            sweepAngle: 1,
+          },
+        ],
+      })
+    );
+
+    expect(document.entities).toHaveLength(2);
+    expect(document.skippedCount).toBe(3);
+  });
+
+  it("consumes a point with a point code and a solid with an arbitrary color", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [
+          { type: "point", penStyle: 100, at: { x: 1, y: 2 }, code: 3 },
+          { type: "solid", penColor: 10 },
+          {
+            type: "line",
+            group: 5,
+            layer: 6,
+            from: { x: 2, y: 3 },
+            to: { x: 4, y: 5 },
+          },
+        ],
+      })
+    );
+
+    expect(document.skippedCount).toBe(2);
+    const line = document.entities[0];
+    expect(line.type).toBe("line");
+    if (line.type !== "line") return;
+    expect(line.address).toEqual({ group: 5, layer: 6 });
+    expect(line.from.x).toBeCloseTo(2, 6);
+    expect(line.from.y).toBeCloseTo(3, 6);
+    expect(line.to.x).toBeCloseTo(4, 6);
+    expect(line.to.y).toBeCloseTo(5, 6);
+  });
+
+  it("consumes a dimension whose arrow points carry point codes", () => {
+    const document = parseJww(
+      buildJwwFile({
+        entities: [
+          { type: "dimension", text: CP932_KUTAI, arrowPenStyle: 100 },
+          {
+            type: "line",
+            group: 7,
+            layer: 8,
+            from: { x: 1, y: 1 },
+            to: { x: 6, y: 1 },
+          },
+        ],
+      })
+    );
+
+    expect(document.skippedCount).toBe(1);
+    const line = document.entities[0];
+    expect(line.type).toBe("line");
+    if (line.type !== "line") return;
+    expect(line.address).toEqual({ group: 7, layer: 8 });
+    expect(line.to.x).toBeCloseTo(6, 6);
+    expect(line.to.y).toBeCloseTo(1, 6);
+  });
+
+  it("consumes a dimension without the sxf members in a version 351 file", () => {
+    const document = parseJww(
+      buildJwwFile({
+        version: 351,
+        entities: [
+          { type: "dimension", text: CP932_KONKURITO },
+          {
+            type: "line",
+            group: 9,
+            layer: 10,
+            from: { x: 3, y: 4 },
+            to: { x: 7, y: 8 },
+          },
+        ],
+      })
+    );
+
+    expect(document.skippedCount).toBe(1);
+    const line = document.entities[0];
+    expect(line.type).toBe("line");
+    if (line.type !== "line") return;
+    expect(line.address).toEqual({ group: 9, layer: 10 });
+    expect(line.from.x).toBeCloseTo(3, 6);
+    expect(line.to.y).toBeCloseTo(8, 6);
+  });
+
+  it("throws a parse error at the offset of the figure whose class is unknown", () => {
+    // ヘッダ 14095 バイト + 要素数 2 バイト + 1 本目の線 61 バイト（新規クラス
+    // タグ 14 + CData 基底 15 + 座標 32）が、2 つ目のタグのバイト位置になる。
+    const unknownClassOffset = VERSION_700_HEADER_BYTES + 2 + 61;
+    const buffer = buildJwwFile({
+      entities: [
+        { type: "line", from: { x: 0, y: 0 }, to: { x: 1, y: 1 } },
+        { type: "other", className: "CDataHatsu" },
+      ],
+    });
+
+    expect(() => parseJww(buffer)).toThrow(JwwParseError);
+
+    try {
+      parseJww(buffer);
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JwwParseError);
+      expect((error as JwwParseError).offset).toBe(unknownClassOffset);
+      expect((error as JwwParseError).message).toContain("CDataHatsu");
+    }
+  });
+
+  it("throws a parse error when the entity count exceeds what the file holds", () => {
+    try {
+      parseJww(
+        buildJwwFile({
+          rawEntityList: [...u16(0xffff), ...u32(1000000)],
+        })
+      );
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JwwParseError);
+      expect((error as JwwParseError).offset).toBe(VERSION_700_HEADER_BYTES);
+      expect((error as JwwParseError).message).toContain("要素数");
     }
   });
 });

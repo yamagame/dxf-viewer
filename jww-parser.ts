@@ -19,6 +19,20 @@ const SXF_HEADER_VERSION = 420;
 const PEN_WIDTH_VERSION = 351;
 const LINE_CLASS_NAME = "CDataSen";
 const ARC_CLASS_NAME = "CDataEnko";
+const POINT_CLASS_NAME = "CDataTen";
+const TEXT_CLASS_NAME = "CDataMoji";
+const DIMENSION_CLASS_NAME = "CDataSunpou";
+const SOLID_CLASS_NAME = "CDataSolid";
+const BLOCK_REFERENCE_CLASS_NAME = "CDataBlock";
+// 点は線種番号が 100 のときだけ点コード・回転角・倍率を持つ。
+const POINT_CODE_PEN_STYLE = 100;
+// ソリッドは線色番号が 10 のときだけ任意色の RGB 値を持つ。
+const ARBITRARY_COLOR_PEN_COLOR = 10;
+// Ver.4.20 以降の寸法は SXF モードと補助線 2・点 4 のメンバが付く。
+const SXF_DIMENSION_VERSION = 420;
+// クラス参照のオブジェクトタグは WORD 1 つ。図形 1 件はこれと CData 基底を
+// 必ず伴うので、要素数の妥当性を測る最小バイト数になる。
+const OBJECT_TAG_BYTES = 2;
 // MFC の読み込み配列はインデックス 0 を NULL タグ用に予約する。
 const FIRST_LOAD_ARRAY_INDEX = 1;
 const LAYER_GROUP_COUNT = 16;
@@ -89,8 +103,8 @@ export function parseJww(buffer: ArrayBuffer): JwwDocument {
   const archive = new JwwArchiveReader(buffer);
   archive.skip(SIGNATURE.length);
   const header = readHeader(archive);
-  const entities = readEntities(archive, header.version);
-  return { header, entities, skippedCount: 0 };
+  const { entities, skippedCount } = readEntities(archive, header.version);
+  return { header, entities, skippedCount };
 }
 
 // ヘッダ項目の順序とバージョン分岐は jwdatafmt.txt（Jw_cad データ形式解説）と
@@ -282,16 +296,19 @@ function skipTextSettings(archive: JwwArchiveReader): void {
   skipDoubles(archive, 6); // 文字基準点の横方向と縦方向のずれ位置
 }
 
+type JwwEntityList = { entities: JwwEntity[]; skippedCount: number };
+
 // 図形データリスト（m_DataList）。要素数 → オブジェクトタグ → クラス別フィールド
 // の順に並ぶ。ブロック定義リスト（m_DataListList）はこの直後だが読まない。
 function readEntities(
   archive: JwwArchiveReader,
   version: number
-): JwwEntity[] {
-  const count = archive.readCount();
+): JwwEntityList {
+  const count = readEntityCount(archive, version);
   const classNames = new Map<number, string>();
   let nextLoadIndex = FIRST_LOAD_ARRAY_INDEX;
   const entities: JwwEntity[] = [];
+  let skippedCount = 0;
   for (let index = 0; index < count; index += 1) {
     const offset = archive.offset;
     const tag = archive.readObjectTag();
@@ -303,9 +320,32 @@ function readEntities(
     // クラスに続く実体も読み込み配列の 1 枠を占める（MFC CArchive::ReadObject）。
     nextLoadIndex += 1;
     const entity = readEntity(archive, version, className, offset);
-    if (entity !== null) entities.push(entity);
+    if (entity === null) {
+      skippedCount += 1;
+      continue;
+    }
+    entities.push(entity);
   }
-  return entities;
+  return { entities, skippedCount };
+}
+
+// 要素数はヘッダ誤読を検出する最初の関門。1 件あたり最低でもオブジェクトタグと
+// CData 基底が要るため、残りバイト数で賄えない件数はその場で失敗させる。
+function readEntityCount(
+  archive: JwwArchiveReader,
+  version: number
+): number {
+  const offset = archive.offset;
+  const count = archive.readCount();
+  const remaining = archive.byteLength - archive.offset;
+  const minimumBytes = OBJECT_TAG_BYTES + entityBaseByteLength(version);
+  if (count * minimumBytes > remaining) {
+    throw new JwwParseError(
+      `図形データリストの要素数 ${count} は残り ${remaining} バイトに収まりません`,
+      offset
+    );
+  }
+  return count;
 }
 
 // 初出のクラス名を読み込み配列の番号で記録し、以降のタグ参照はその番号で引く。
@@ -329,49 +369,110 @@ function resolveClassName(
 }
 
 // 7 つの図形クラスはいずれも CData を先頭に持つので、基底を読んでから分岐する。
-// 線と円弧以外を消費して null を返す分岐はここに足す。
+// 線と円弧だけを返し、残りはフィールドを消費して null を返す。図形リストは長さを
+// 前置きしないため、消費するクラスも 1 バイトの過不足なく歩く必要がある。
+type JwwEntityReader = (
+  archive: JwwArchiveReader,
+  version: number,
+  base: JwwEntityBase
+) => JwwEntity | null;
+
+const ENTITY_READERS = new Map<string, JwwEntityReader>([
+  [LINE_CLASS_NAME, (archive, _version, base) => readLine(archive, base)],
+  [ARC_CLASS_NAME, (archive, _version, base) => readArc(archive, base)],
+  [
+    POINT_CLASS_NAME,
+    (archive, _version, base) => {
+      consumePoint(archive, base);
+      return null;
+    },
+  ],
+  [
+    TEXT_CLASS_NAME,
+    (archive) => {
+      consumeText(archive);
+      return null;
+    },
+  ],
+  [
+    DIMENSION_CLASS_NAME,
+    (archive, version) => {
+      consumeDimension(archive, version);
+      return null;
+    },
+  ],
+  [
+    SOLID_CLASS_NAME,
+    (archive, _version, base) => {
+      consumeSolid(archive, base);
+      return null;
+    },
+  ],
+  [
+    BLOCK_REFERENCE_CLASS_NAME,
+    (archive) => {
+      consumeBlockReference(archive);
+      return null;
+    },
+  ],
+]);
+
 function readEntity(
   archive: JwwArchiveReader,
   version: number,
   className: string,
   offset: number
 ): JwwEntity | null {
-  const address = readEntityBase(archive, version);
-  if (className === LINE_CLASS_NAME) return readLine(archive, address);
-  if (className === ARC_CLASS_NAME) return readArc(archive, address);
-  throw new JwwParseError(`図形クラス ${className} は読み取れません`, offset);
+  const read = ENTITY_READERS.get(className);
+  if (read === undefined) {
+    throw new JwwParseError(`図形クラス ${className} は読み取れません`, offset);
+  }
+  const base = readEntityBase(archive, version);
+  return read(archive, version, base);
 }
 
 // 図形データの基底クラス CData（jwdatafmt.txt / jwwdoc.h CData::Serialize）。
+// 線種番号と線色番号は点とソリッドの条件付きフィールドを左右するため保持する。
+type JwwEntityBase = {
+  address: JwwLayerAddress;
+  penStyle: number;
+  penColor: number;
+};
+
 function readEntityBase(
   archive: JwwArchiveReader,
   version: number
-): JwwLayerAddress {
+): JwwEntityBase {
   archive.readDword(); // 曲線属性番号
-  archive.readByte(); // 線種番号
-  archive.readWord(); // 線色番号
+  const penStyle = archive.readByte(); // 線種番号
+  const penColor = archive.readWord(); // 線色番号
   if (version >= PEN_WIDTH_VERSION) {
     archive.readWord(); // 線幅
   }
   const layer = archive.readWord();
   const group = archive.readWord();
   archive.readWord(); // 属性フラグ
-  return { group, layer };
+  return { address: { group, layer }, penStyle, penColor };
+}
+
+// CData 基底の実バイト数。Ver.3.51 以降は線幅 WORD が 1 つ増えて 15 バイト。
+function entityBaseByteLength(version: number): number {
+  return version >= PEN_WIDTH_VERSION ? 15 : 13;
 }
 
 function readLine(
   archive: JwwArchiveReader,
-  address: JwwLayerAddress
+  base: JwwEntityBase
 ): JwwLineEntity {
   const from = readPoint(archive);
   const to = readPoint(archive);
-  return { type: "line", address, from, to };
+  return { type: "line", address: base.address, from, to };
 }
 
 // 角度はラジアン、座標と半径はファイル内の値をそのまま持つ（換算しない）。
 function readArc(
   archive: JwwArchiveReader,
-  address: JwwLayerAddress
+  base: JwwEntityBase
 ): JwwArcEntity {
   const center = readPoint(archive);
   const radius = archive.readDouble();
@@ -382,7 +483,7 @@ function readArc(
   const fullCircle = archive.readDword() !== 0;
   return {
     type: "arc",
-    address,
+    address: base.address,
     center,
     radius,
     startAngle,
@@ -397,6 +498,65 @@ function readPoint(archive: JwwArchiveReader): Point {
   const x = archive.readDouble();
   const y = archive.readDouble();
   return { x, y };
+}
+
+// 点データ CDataTen。線種番号が 100 のときだけ点コード以降が続く。
+function consumePoint(archive: JwwArchiveReader, base: JwwEntityBase): void {
+  skipDoubles(archive, 2); // 点 x, y
+  skipDwords(archive, 1); // 仮点フラグ
+  if (base.penStyle !== POINT_CODE_PEN_STYLE) return;
+  skipDwords(archive, 1); // 点コード
+  skipDoubles(archive, 2); // 表示角、表示倍率
+}
+
+// 文字データ CDataMoji。末尾はフォント名と文字列の CString 2 つ。
+function consumeText(archive: JwwArchiveReader): void {
+  skipDoubles(archive, 4); // 始点 x, y と終点 x, y
+  skipDwords(archive, 1); // 文字種
+  skipDoubles(archive, 4); // 文字サイズ横、縦、文字間隔、角度
+  archive.readString(); // フォント名
+  archive.readString(); // 文字列
+}
+
+// 寸法データ CDataSunpou。線・文字・点のメンバはそれぞれ CData 基底から始まる。
+function consumeDimension(archive: JwwArchiveReader, version: number): void {
+  consumeMemberLine(archive, version); // 線分メンバ
+  consumeMemberText(archive, version); // 文字メンバ
+  if (version < SXF_DIMENSION_VERSION) return;
+  archive.readWord(); // SXF のモード
+  consumeMemberLine(archive, version); // 補助線 1
+  consumeMemberLine(archive, version); // 補助線 2
+  consumeMemberPoint(archive, version); // 矢印 1
+  consumeMemberPoint(archive, version); // 矢印 2
+  consumeMemberPoint(archive, version); // 基準点 1
+  consumeMemberPoint(archive, version); // 基準点 2
+}
+
+function consumeMemberLine(archive: JwwArchiveReader, version: number): void {
+  readEntityBase(archive, version);
+  skipDoubles(archive, 4); // 始点 x, y と終点 x, y
+}
+
+function consumeMemberText(archive: JwwArchiveReader, version: number): void {
+  readEntityBase(archive, version);
+  consumeText(archive);
+}
+
+function consumeMemberPoint(archive: JwwArchiveReader, version: number): void {
+  consumePoint(archive, readEntityBase(archive, version));
+}
+
+// ソリッドデータ CDataSolid。線色番号が 10 のときだけ RGB 値が続く。
+function consumeSolid(archive: JwwArchiveReader, base: JwwEntityBase): void {
+  skipDoubles(archive, 8); // 第 1〜4 点の x, y
+  if (base.penColor !== ARBITRARY_COLOR_PEN_COLOR) return;
+  skipDwords(archive, 1); // 塗潰し色の RGB 値
+}
+
+// ブロック参照 CDataBlock。参照先のブロック定義リストは読まない。
+function consumeBlockReference(archive: JwwArchiveReader): void {
+  skipDoubles(archive, 5); // 基準点 x, y、倍率 x, y、回転角
+  skipDwords(archive, 1); // ブロック定義データの通し番号
 }
 
 function skipDwords(archive: JwwArchiveReader, count: number): void {
