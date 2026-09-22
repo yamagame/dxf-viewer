@@ -1,0 +1,22 @@
+{
+  "feature_name": "jww-file-loading",
+  "created_at": "2026-09-22T04:11:22Z",
+  "updated_at": "2026-09-22T04:46:59Z",
+  "language": "ja",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}
