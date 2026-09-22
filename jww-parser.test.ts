@@ -31,6 +31,11 @@ function reader(values: number[]): JwwArchiveReader {
 
 // CP932 bytes for "平面図" (a typical Japanese layer name).
 const CP932_HEIMENZU = [0x95, 0xbd, 0x96, 0xca, 0x90, 0x7d];
+// CP932 bytes for "建具" and "躯体", two more double-byte layer names.
+const CP932_TATEGU = [0x8c, 0x9a, 0x8b, 0xef];
+const CP932_KUTAI = [0x8b, 0xeb, 0x91, 0xcc];
+// CP932 bytes for "ｺﾝｸﾘｰﾄ", half-width katakana held in single bytes.
+const CP932_KONKURITO = [0xba, 0xdd, 0xb8, 0xd8, 0xb0, 0xc4];
 
 describe("JwwArchiveReader", () => {
   it("exposes the buffer length and starts at offset zero", () => {
@@ -227,13 +232,14 @@ describe("JwwArchiveReader", () => {
   });
 });
 
-type SyntheticLayer = { state?: number; protect?: number };
+type SyntheticLayer = { state?: number; protect?: number; name?: number[] };
 
 type SyntheticLayerGroup = {
   state?: number;
   writeLayer?: number;
   scale?: number;
   protect?: number;
+  name?: number[];
   layers?: SyntheticLayer[];
 };
 
@@ -250,8 +256,41 @@ type SyntheticJwwFile = {
 const LAYER_GROUP_COUNT = 16;
 const LAYER_COUNT = 16;
 
+// A version 700 file whose memo and names are all empty: 2389 bytes up to the
+// end of the layer state block (8 signature + 4 version + 1 memo + 4 drawing
+// size + 4 write group + 16 x 148 state bytes) plus 11706 bytes of remaining
+// header items, of which 9758 are the Ver.4.20 extended color and line type
+// definitions.
+const VERSION_700_HEADER_BYTES = 14095;
+// Ver.3.51 keeps every Ver.3.00 item but drops the 9758 bytes of Ver.4.20
+// extended definitions.
+const VERSION_351_HEADER_BYTES = 4337;
+// Ver.2.30 additionally drops the sky view condition (16 bytes), the text draw
+// state block (56 bytes) and four of the eight mark jumps (128 bytes).
+const VERSION_230_HEADER_BYTES = 4137;
+// The header's last item is the six doubles of text base point offsets.
+const TEXT_BASE_POINT_OFFSET_BYTES = 48;
+
 function cstring(bytes: number[]): number[] {
   return [bytes.length, ...bytes];
+}
+
+function zeroBytes(count: number): number[] {
+  return new Array(count).fill(0);
+}
+
+// Filler for header items the parser only has to step over. A zero byte run is
+// a valid run of zero-valued DWORDs, doubles or empty length-prefixed strings.
+function zeroDwords(count: number): number[] {
+  return zeroBytes(count * 4);
+}
+
+function zeroDoubles(count: number): number[] {
+  return zeroBytes(count * 8);
+}
+
+function emptyStrings(count: number): number[] {
+  return zeroBytes(count);
 }
 
 function layerBytes(layer: SyntheticLayer): number[] {
@@ -271,8 +310,105 @@ function layerGroupBytes(group: SyntheticLayerGroup): number[] {
   return bytes;
 }
 
+function layerNameBytes(file: SyntheticJwwFile): number[] {
+  const bytes: number[] = [];
+  for (let group = 0; group < LAYER_GROUP_COUNT; group += 1) {
+    for (let layer = 0; layer < LAYER_COUNT; layer += 1) {
+      bytes.push(...cstring(file.groups?.[group]?.layers?.[layer]?.name ?? []));
+    }
+  }
+  return bytes;
+}
+
+function layerGroupNameBytes(file: SyntheticJwwFile): number[] {
+  const bytes: number[] = [];
+  for (let group = 0; group < LAYER_GROUP_COUNT; group += 1) {
+    bytes.push(...cstring(file.groups?.[group]?.name ?? []));
+  }
+  return bytes;
+}
+
+// The header items that follow the layer state block, in the order the format
+// description (jwdatafmt.txt) and jwwdoc.cpp::ReadHeader() serialize them.
+function headerRemainderBytes(file: SyntheticJwwFile): number[] {
+  const version = file.version ?? 700;
+  const bytes = [
+    ...zeroDwords(14), // ダミー
+    ...zeroDwords(5), // 寸法関係の設定
+    ...zeroDwords(1), // ダミー
+    ...zeroDwords(1), // 線描画の最大幅
+    ...zeroDoubles(3), // プリンタ出力範囲の原点 x, y と出力倍率
+    ...zeroDwords(2), // プリンタ 90 度回転出力、目盛設定モード
+    ...zeroDoubles(5), // 目盛の表示最小間隔、表示間隔 x, y、基準点 x, y
+    ...layerNameBytes(file),
+    ...layerGroupNameBytes(file),
+    ...zeroDoubles(2), // 日影計算の測定面高さ、緯度
+    ...zeroDwords(1), // 日影計算の 9〜15 時の測定指定
+    ...zeroDoubles(1), // 壁面日影の測定面高さ
+  ];
+  if (version >= 300) {
+    bytes.push(...zeroDoubles(2)); // 天空図の測定面高さ、半径
+  }
+  bytes.push(
+    ...zeroDwords(1), // 2.5D の計算単位
+    ...zeroDoubles(6) // 保存時の画面倍率と原点、範囲記憶の倍率と基準点
+  );
+  if (version >= 300) {
+    for (let index = 0; index < 8; index += 1) {
+      bytes.push(...zeroDoubles(3), ...zeroDwords(1)); // マークジャンプ
+    }
+    bytes.push(
+      ...zeroDoubles(3),
+      ...zeroDwords(1),
+      ...zeroDoubles(3),
+      ...zeroDwords(1) // 文字の描画状態
+    );
+  } else {
+    for (let index = 0; index < 4; index += 1) {
+      bytes.push(...zeroDoubles(3)); // マークジャンプ（レイヤグループなし）
+    }
+  }
+  bytes.push(
+    ...zeroDoubles(11), // 複線間隔 10 件と両側複線の留線出寸法
+    ...zeroDwords(20) // 色番号ごとの画面表示色と線幅
+  );
+  for (let index = 0; index < 10; index += 1) {
+    bytes.push(...zeroDwords(2), ...zeroDoubles(1)); // プリンタ出力色、線幅、実点半径
+  }
+  bytes.push(
+    ...zeroDwords(32), // 線種番号 2〜9
+    ...zeroDwords(25), // ランダム線 1〜5
+    ...zeroDwords(16), // 倍長線種番号 6〜9
+    ...zeroDwords(16), // 描画・印刷の指定 12 件、2.5D 視点フラグ、視点水平角 3 件
+    ...zeroDoubles(5), // 2.5D の透視図・鳥瞰図・アイソメ図の視点
+    ...zeroDoubles(4), // 線の長さ、矩形寸法 x, y、円の半径の最終値
+    ...zeroDwords(2) // ソリッドの任意色フラグと既定色
+  );
+  if (version >= 420) {
+    bytes.push(...zeroDwords(2 * 257)); // 拡張線色の画面表示色と線幅
+    for (let index = 0; index <= 256; index += 1) {
+      bytes.push(...emptyStrings(1), ...zeroDwords(2), ...zeroDoubles(1));
+    }
+    bytes.push(...zeroDwords(4 * 33)); // 拡張線種のパターン
+    for (let index = 0; index <= 32; index += 1) {
+      bytes.push(...emptyStrings(1), ...zeroDwords(1), ...zeroDoubles(10));
+    }
+  }
+  for (let index = 0; index < 10; index += 1) {
+    bytes.push(...zeroDoubles(3), ...zeroDwords(1)); // 文字種 1〜10
+  }
+  bytes.push(
+    ...zeroDoubles(3), // 書込み文字の文字幅、高さ、間隔
+    ...zeroDwords(2), // 書込み文字の色番号、文字番号
+    ...zeroDoubles(2), // 文字位置整理の行間、文字数
+    ...zeroDwords(1), // 文字基準点のずれ位置使用フラグ
+    ...zeroDoubles(6) // 文字基準点の横方向と縦方向のずれ位置
+  );
+  return bytes;
+}
+
 // Assembles a synthetic JWW file. Unspecified fields take defaults, and `rest`
-// is the seam where the remaining header items and the entity list are appended.
+// is the seam where the entity list is appended.
 function buildJwwFile(file: SyntheticJwwFile = {}): ArrayBuffer {
   const bytes = [
     ...ascii(file.signature ?? "JwwData."),
@@ -284,6 +420,7 @@ function buildJwwFile(file: SyntheticJwwFile = {}): ArrayBuffer {
   for (let index = 0; index < LAYER_GROUP_COUNT; index += 1) {
     bytes.push(...layerGroupBytes(file.groups?.[index] ?? {}));
   }
+  bytes.push(...headerRemainderBytes(file));
   bytes.push(...(file.rest ?? []));
   return new Uint8Array(bytes).buffer;
 }
@@ -405,6 +542,121 @@ describe("parseJww", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(JwwParseError);
       expect((error as JwwParseError).message).toContain("レイヤグループ状態");
+    }
+  });
+
+  it("reads layer names and layer group names at their matching addresses", () => {
+    const document = parseJww(
+      buildJwwFile({
+        groups: [
+          {
+            name: CP932_HEIMENZU,
+            layers: [
+              { name: CP932_TATEGU },
+              {},
+              { name: ascii("S-1") },
+              { name: CP932_KONKURITO },
+            ],
+          },
+          { layers: [{ name: CP932_KUTAI }] },
+        ],
+      })
+    );
+
+    expect(document.header.groups[0].name).toContain("平面図");
+    expect(document.header.groups[0].layers[0].name).toContain("建具");
+    expect(document.header.groups[0].layers[1].name).toBe("");
+    expect(document.header.groups[0].layers[2].name).toBe("S-1");
+    expect(document.header.groups[0].layers[3].name).toContain("ｺﾝｸﾘｰﾄ");
+    expect(document.header.groups[1].name).toBe("");
+    expect(document.header.groups[1].layers[0].name).toContain("躯体");
+    expect(document.header.groups[1].layers[1].name).toBe("");
+    expect(document.header.groups[15].name).toBe("");
+    expect(document.header.groups[15].layers[15].name).toBe("");
+  });
+
+  it("keeps layer states and layer names aligned on the same address", () => {
+    const document = parseJww(
+      buildJwwFile({
+        groups: [
+          { layers: [{ state: 0, name: CP932_TATEGU }] },
+          { state: 0, name: CP932_HEIMENZU, layers: [{ state: 3 }] },
+        ],
+      })
+    );
+
+    expect(document.header.groups[0].layers[0].state).toBe(0);
+    expect(document.header.groups[0].layers[0].name).toContain("建具");
+    expect(document.header.groups[1].state).toBe(0);
+    expect(document.header.groups[1].name).toContain("平面図");
+    expect(document.header.groups[1].layers[0].state).toBe(3);
+    expect(document.header.groups[1].layers[0].name).toBe("");
+  });
+
+  it("ends the header walk at the first byte of the entity list", () => {
+    const header = buildJwwFile();
+    expect(header.byteLength).toBe(VERSION_700_HEADER_BYTES);
+    expect(parseJww(header).header.version).toBe(700);
+
+    try {
+      parseJww(header.slice(0, VERSION_700_HEADER_BYTES - 1));
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JwwParseError);
+      expect((error as JwwParseError).offset).toBe(
+        VERSION_700_HEADER_BYTES - TEXT_BASE_POINT_OFFSET_BYTES
+      );
+    }
+  });
+
+  it("leaves the entity list that follows the header unread", () => {
+    const document = parseJww(
+      buildJwwFile({
+        groups: [{ name: CP932_HEIMENZU }],
+        rest: [
+          ...u16(2),
+          ...u16(0xffff),
+          ...u16(0),
+          ...u16(8),
+          ...ascii("CDataSen"),
+        ],
+      })
+    );
+
+    expect(document.header.groups[0].name).toContain("平面図");
+    expect(document.entities).toEqual([]);
+    expect(document.skippedCount).toBe(0);
+  });
+
+  it("omits the extended color and line type definitions below version 420", () => {
+    const header = buildJwwFile({ version: 351 });
+    expect(header.byteLength).toBe(VERSION_351_HEADER_BYTES);
+    expect(parseJww(header).header.version).toBe(351);
+
+    try {
+      parseJww(header.slice(0, VERSION_351_HEADER_BYTES - 1));
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JwwParseError);
+      expect((error as JwwParseError).offset).toBe(
+        VERSION_351_HEADER_BYTES - TEXT_BASE_POINT_OFFSET_BYTES
+      );
+    }
+  });
+
+  it("omits the sky view, the extended mark jumps and the text draw state below version 300", () => {
+    const header = buildJwwFile({ version: 230 });
+    expect(header.byteLength).toBe(VERSION_230_HEADER_BYTES);
+    expect(parseJww(header).header.version).toBe(230);
+
+    try {
+      parseJww(header.slice(0, VERSION_230_HEADER_BYTES - 1));
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(JwwParseError);
+      expect((error as JwwParseError).offset).toBe(
+        VERSION_230_HEADER_BYTES - TEXT_BASE_POINT_OFFSET_BYTES
+      );
     }
   });
 
