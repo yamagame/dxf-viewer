@@ -9,7 +9,7 @@
   - _Requirements: 1.3, 3.3, 3.4, 3.5, 3.7_
 
 - [ ] 2. JWW バイナリの解析
-- [ ] 2.1 MFC アーカイブ形式の読み取りカーソルを実装する
+- [x] 2.1 MFC アーカイブ形式の読み取りカーソルを実装する
   - バイト位置を保持し、1/2/4 バイト整数・倍精度小数・長さ前置きの文字列・要素数・オブジェクトタグを順に読み出せるようにする
   - 文字列は CP932 としてデコードし、日本語を文字化けなく取り出す
   - 読み取りが範囲外になる場合は、バイト位置を含む解析エラーとして失敗させる
@@ -118,3 +118,13 @@
   - 利用者向けの説明に対応形式と JWW の制限（描画対象・スコープ外の要素）を追記する
   - 完了状態: 構成規約に新規ファイル群すべての役割が記載され、説明の対応形式が DXF と JWW の両方になっている
   - _Depends: 4.2_
+
+## Implementation Notes
+
+- MFC オブジェクトタグの実定義は `wNullTag = 0x0000` / `wNewClassTag = 0xFFFF` / `wClassTag = 0x8000` / `wBigObjectTag = 0x7FFF`。クラス参照のインデックスは `tag & 0x7FFF`。MS TN002・MFC `arcobj.cpp`・LibreCAD jwwlib の 3 源で確認済み（タスク 2.1）
+- `wBigObjectTag`（`0x7FFF`）は design.md の `JwwObjectTag` が 3 種のみのため未対応。後続 DWORD を消費しないが、未知クラスインデックスは jww-parser が解析エラーにするため無音では壊れない（タスク 2.1 レビュー指摘）
+- 新規クラスタグ内のクラス名は `CString`（CP932）ではなく `WORD` スキーマ + `WORD` 長 + 生 ASCII（`CRuntimeClass::Store` の形式）
+- MFC `CString` の長さ前置きは BYTE（`0xFF` 未満）→ WORD（`0xFFFF` 未満）→ DWORD のエスケープ連鎖。Unicode マーカ `0xFFFE` は JWW（ANSI/CP932）では出現しないため未対応
+- MFC のカウントは WORD、`0xFFFF` がエスケープで DWORD が続く
+- `JwwParseError` は依存方向を一方向に保つため `jww-archive-reader.ts` に定義。`jww-parser.ts` 側から re-export して design.md の公開インターフェースを維持する
+- `TextDecoder("shift_jis")` は Vitest（Node v24.19.0）で正常動作を確認済み。research.md のリスク項目はクローズ
