@@ -1,6 +1,6 @@
-import DxfParser from "dxf-parser";
 import { getVertexKey, type Point, type Segment } from "./geometry";
-import { extractDrawData, type DrawCommand } from "./drawing-model";
+import type { DrawCommand, ExtractedDrawData } from "./drawing-model";
+import { loadDrawing } from "./drawing-loader";
 import { LayerController } from "./layer-controller";
 import { MeasurementManager } from "./measurement-manager";
 import { EdgeSelectionManager } from "./edge-selection-manager";
@@ -229,43 +229,47 @@ class DxfViewerApp {
     this.updatePanAvailabilityClass();
   };
 
+  private clearDrawingView(): void {
+    this.setZoomControlsEnabled(false);
+    this.resetLoadedDataState();
+    this.clearCanvas();
+  }
+
+  private showDrawing(data: ExtractedDrawData): void {
+    this.drawCommands = data.commands;
+    this.drawSegments = data.segments;
+    this.layerController.setLayers(data.layers);
+    this.viewportController.setBounds(data.bounds);
+
+    this.renderLayerControls();
+    this.rebuildSelectableVertices();
+    this.resetMeasurement();
+    this.viewportController.fitToScreen(this.canvas.width, this.canvas.height, 30);
+    this.setZoomControlsEnabled(true);
+    this.updatePanAvailabilityClass();
+    this.render();
+  }
+
   private readonly onFileChange = async (): Promise<void> => {
     const [file] = this.fileInput.files || [];
     if (!file) return;
 
     this.statusEl.textContent = `読み込み中: ${file.name}`;
-    this.setZoomControlsEnabled(false);
-    this.resetLoadedDataState();
-    this.clearCanvas();
+    this.clearDrawingView();
 
     try {
-      const text = await file.text();
-      const parser = new DxfParser();
-      const dxf = parser.parseSync(text);
-      const extracted = extractDrawData(dxf.entities || []);
-      if (!extracted.commands.length) {
-        this.statusEl.textContent = "対応エンティティが見つかりませんでした。";
+      const bytes = await file.arrayBuffer();
+      const result = loadDrawing({ fileName: file.name, bytes });
+      if (result.status !== "loaded") {
+        this.statusEl.textContent = result.message;
         return;
       }
 
-      this.drawCommands = extracted.commands;
-      this.drawSegments = extracted.segments;
-      this.layerController.setLayers(extracted.layers);
-      this.viewportController.setBounds(extracted.bounds);
-
-      this.renderLayerControls();
-      this.rebuildSelectableVertices();
-      this.resetMeasurement();
-      this.viewportController.fitToScreen(this.canvas.width, this.canvas.height, 30);
-      this.setZoomControlsEnabled(true);
-      this.updatePanAvailabilityClass();
-      this.render();
-
+      this.showDrawing(result.data);
       this.statusEl.textContent = `表示完了: ${file.name} (${this.drawCommands.length}要素, ${this.layerController.getLayerNames().length}レイヤー)`;
     } catch (error) {
       console.error(error);
-      this.updatePanAvailabilityClass();
-      this.statusEl.textContent = "DXFの解析に失敗しました。ファイル形式を確認してください。";
+      this.clearDrawingView();
     }
   };
 
