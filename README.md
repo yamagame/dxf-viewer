@@ -107,3 +107,7 @@ python3 scripts/dcz-to-dxf.py ./drawings/elevation.dcz ./converted/elevation.dxf
 - レイヤグループの縮尺による実寸換算は行わず、ファイル内の座標値をそのままモデル座標として扱います
 - 線種・線色・線幅は再現しません
 - 編集・保存・書き出し、および DXF ⇔ JWW の相互変換には対応しません
+
+## LICENSE
+
+本プロジェクトは [MIT License](LICENSE) のもとで公開されています。
