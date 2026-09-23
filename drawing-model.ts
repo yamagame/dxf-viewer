@@ -92,6 +92,21 @@ export function extractDrawData(entities: any[]): ExtractedDrawData {
     vertices.forEach((v) => includePoint(v.x, v.y));
   };
 
+  const includeArcBounds = (center: Point, radius: number, start: number, end: number): void => {
+    const tau = Math.PI * 2;
+    const normalize = (angle: number): number => ((angle % tau) + tau) % tau;
+    const startAngle = normalize(start);
+    const sweep = normalize(end - start);
+    const includesAngle = (angle: number): boolean => normalize(angle - startAngle) <= sweep + 1e-12;
+    const angles = [startAngle, startAngle + sweep];
+    for (const cardinal of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+      if (includesAngle(cardinal)) angles.push(cardinal);
+    }
+    for (const angle of angles) {
+      includePoint(center.x + Math.cos(angle) * radius, center.y + Math.sin(angle) * radius);
+    }
+  };
+
   for (const entity of entities) {
     const layer = normalizeLayerName(entity.layer);
     layersSet.add(layer);
@@ -170,15 +185,15 @@ export function extractDrawData(entities: any[]): ExtractedDrawData {
       Number.isFinite(entity.startAngle) &&
       Number.isFinite(entity.endAngle)
     ) {
-      includePoint(entity.center.x - entity.radius, entity.center.y - entity.radius);
-      includePoint(entity.center.x + entity.radius, entity.center.y + entity.radius);
+      includeArcBounds(entity.center, entity.radius, entity.startAngle, entity.endAngle);
       commands.push({
         type: "arc",
         layer,
         center: { x: entity.center.x, y: entity.center.y },
         radius: entity.radius,
-        start: (entity.startAngle * Math.PI) / 180,
-        end: (entity.endAngle * Math.PI) / 180,
+        // dxf-parser already converts DXF ARC angles from degrees to radians.
+        start: entity.startAngle,
+        end: entity.endAngle,
       });
     }
   }
