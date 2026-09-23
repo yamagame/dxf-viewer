@@ -48,7 +48,7 @@ output_path="$output_dir/$output_name"
 [ ! -e "$output_path" ] || fail "output already exists: $output_path"
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-image=${DWG_CONVERTER_IMAGE:-dxf-loader-dwg-converter:0.13.4}
+image=${DWG_CONVERTER_IMAGE:-dxf-viewer-dwg-converter:0.13.4}
 
 if ! docker image inspect "$image" >/dev/null 2>&1; then
   docker build -f "$project_root/tools/dwg-converter/Dockerfile" -t "$image" "$project_root/tools/dwg-converter"

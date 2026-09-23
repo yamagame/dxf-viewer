@@ -1,5 +1,5 @@
 {
-  "name": "dxf-loader",
+  "name": "dxf-viewer",
   "version": "1.0.0",
   "description": "DXFファイルをブラウザ上で読み込んで表示するシンプルなWebアプリです。 ツールバーを上部に配置し、図面表示領域はウインドウ全体に広がります。",
   "scripts": {
