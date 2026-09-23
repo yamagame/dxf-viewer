@@ -79,7 +79,8 @@ export type JwwArcEntity = {
   fullCircle: boolean;
 };
 
-export type JwwEntity = JwwLineEntity | JwwArcEntity;
+export type JwwTextEntity = { type: "text"; address: JwwLayerAddress; position: Point; text: string; height: number; rotation: number };
+export type JwwEntity = JwwLineEntity | JwwArcEntity | JwwTextEntity;
 
 export type JwwDocument = {
   header: JwwHeader;
@@ -389,10 +390,7 @@ const ENTITY_READERS = new Map<string, JwwEntityReader>([
   ],
   [
     TEXT_CLASS_NAME,
-    (archive) => {
-      consumeText(archive);
-      return null;
-    },
+    (archive, _version, base) => readText(archive, base),
   ],
   [
     DIMENSION_CLASS_NAME,
@@ -510,12 +508,25 @@ function consumePoint(archive: JwwArchiveReader, base: JwwEntityBase): void {
 }
 
 // 文字データ CDataMoji。末尾はフォント名と文字列の CString 2 つ。
+function readText(archive: JwwArchiveReader, base: JwwEntityBase): JwwTextEntity {
+  const position = readPoint(archive);
+  readPoint(archive);
+  archive.readDword();
+  const width = archive.readDouble();
+  const height = archive.readDouble();
+  archive.readDouble();
+  const rotation = archive.readDouble();
+  archive.readString();
+  const text = archive.readString();
+  return { type: "text", address: base.address, position, text, height: Math.abs(height || width), rotation };
+}
+
 function consumeText(archive: JwwArchiveReader): void {
-  skipDoubles(archive, 4); // 始点 x, y と終点 x, y
-  skipDwords(archive, 1); // 文字種
-  skipDoubles(archive, 4); // 文字サイズ横、縦、文字間隔、角度
-  archive.readString(); // フォント名
-  archive.readString(); // 文字列
+  skipDoubles(archive, 4);
+  skipDwords(archive, 1);
+  skipDoubles(archive, 4);
+  archive.readString();
+  archive.readString();
 }
 
 // 寸法データ CDataSunpou。線・文字・点のメンバはそれぞれ CData 基底から始まる。

@@ -4,7 +4,8 @@ export type DrawCommand =
   | { type: "line"; layer: string; from: Point; to: Point }
   | { type: "polyline"; layer: string; vertices: Point[]; closed: boolean }
   | { type: "circle"; layer: string; center: Point; radius: number }
-  | { type: "arc"; layer: string; center: Point; radius: number; start: number; end: number };
+  | { type: "arc"; layer: string; center: Point; radius: number; start: number; end: number }
+  | { type: "text"; layer: string; position: Point; text: string; height: number; rotation: number };
 
 export type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
 
@@ -94,6 +95,16 @@ export function extractDrawData(entities: any[]): ExtractedDrawData {
   for (const entity of entities) {
     const layer = normalizeLayerName(entity.layer);
     layersSet.add(layer);
+
+    if ((entity.type === "TEXT" || entity.type === "MTEXT" || entity.type === "ATTRIB" || entity.type === "ATTDEF") && entity.text) {
+      const position = entity.position ?? entity.startPoint;
+      const height = entity.height ?? entity.textHeight;
+      if (position && Number.isFinite(position.x) && Number.isFinite(position.y) && Number.isFinite(height) && height > 0) {
+        includePoint(position.x, position.y);
+        commands.push({ type: "text", layer, position: { x: position.x, y: position.y }, text: entity.text, height, rotation: ((entity.rotation ?? 0) * Math.PI) / 180 });
+      }
+      continue;
+    }
 
     if (entity.type === "LINE" && entity.vertices?.length >= 2) {
       const [a, b] = entity.vertices;

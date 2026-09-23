@@ -32,12 +32,13 @@ class DxfViewerApp {
   private readonly layerController = new LayerController();
   private readonly measurementManager = new MeasurementManager();
   private readonly edgeSelectionManager = new EdgeSelectionManager();
-  private readonly viewportController = new ViewportController(0.2, 20);
+  private readonly viewportController = new ViewportController(0.2, 200);
   private readonly selectionController = new SelectionController(12, 8);
   private readonly renderer = new CanvasRenderer(this.ctx);
 
   private drawCommands: DrawCommand[] = [];
   private drawSegments: Segment[] = [];
+  private selectedText: Extract<DrawCommand, { type: "text" }> | null = null;
   private isShiftPressed = false;
   private isDragging = false;
   private isPanByMiddleButton = false;
@@ -86,6 +87,7 @@ class DxfViewerApp {
   private resetLoadedDataState(): void {
     this.drawCommands = [];
     this.drawSegments = [];
+    this.selectedText = null;
     this.layerController.clear();
     this.selectionController.clear();
     this.viewportController.clear();
@@ -200,6 +202,7 @@ class DxfViewerApp {
       selectedEdge: this.edgeSelectionManager.getSelected(),
       hoveredVertex: this.selectionController.getHoveredVertex(),
       selectedMeasurePoints: this.measurementManager.getSelectedPoints(),
+      selectedText: this.selectedText,
     });
   }
 
@@ -491,6 +494,22 @@ class DxfViewerApp {
       return;
     }
 
+    const clickedText = this.findTextAt(event);
+    if (clickedText) {
+      this.selectedText = clickedText;
+      this.render();
+      if (!navigator.clipboard?.writeText) {
+        this.updateEdgeInfo("テキストをコピーできません。HTTPS または localhost で開いてください。");
+      } else {
+        void navigator.clipboard.writeText(clickedText.text).then(
+          () => { this.updateEdgeInfo(`テキストをコピーしました: ${clickedText.text}`); },
+          () => { this.updateEdgeInfo("クリップボードにコピーできませんでした。"); }
+        );
+      }
+      return;
+    }
+    this.selectedText = null;
+
     const nearestEdge = this.selectionController.findNearestEdge(
       this.getVisibleSegments(),
       event,
@@ -514,6 +533,35 @@ class DxfViewerApp {
       : this.measurementManager.selectPoint(nearestVertex);
     this.render();
   };
+
+  private findTextAt(event: MouseEvent): Extract<DrawCommand, { type: "text" }> | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const transform = this.viewportController.getTransform(this.canvas.width, this.canvas.height);
+    const visibleTexts = this.layerController
+      .filterVisibleCommands(this.drawCommands)
+      .filter((command): command is Extract<DrawCommand, { type: "text" }> => command.type === "text")
+      .reverse();
+
+    for (const command of visibleTexts) {
+      const anchor = this.modelToCanvas(command.position);
+      const dx = pointer.x - anchor.x;
+      const dy = pointer.y - anchor.y;
+      const cos = Math.cos(command.rotation);
+      const sin = Math.sin(command.rotation);
+      const localX = dx * cos - dy * sin;
+      const localY = dx * sin + dy * cos;
+      const fontSize = Math.max(1, command.height * transform.scale);
+      this.ctx.save();
+      this.ctx.font = `${fontSize}px sans-serif`;
+      const width = this.ctx.measureText(command.text).width;
+      this.ctx.restore();
+      if (localX >= -4 && localX <= width + 4 && localY >= -fontSize - 4 && localY <= 4) {
+        return command;
+      }
+    }
+    return null;
+  }
 
   private readonly onWheel = (event: WheelEvent): void => {
     if (!this.hasLoadedDrawing()) return;

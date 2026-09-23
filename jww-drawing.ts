@@ -45,6 +45,12 @@ export function extractJwwDrawData(document: JwwDocument): ExtractedDrawData {
   };
 
   for (const entity of document.entities) {
+    if (entity.type === "text") {
+      const layer = resolveLayer(entity.address);
+      includePoint(entity.position.x, entity.position.y);
+      commands.push({ type: "text", layer, position: entity.position, text: entity.text, height: entity.height, rotation: entity.rotation });
+      continue;
+    }
     if (entity.type === "line") {
       appendLine(entity, resolveLayer(entity.address), commands, segments, includePoint);
       continue;

@@ -7,6 +7,7 @@ type OverlayState = {
   selectedEdge: Segment | null;
   hoveredVertex: Point | null;
   selectedMeasurePoints: Point[];
+  selectedText: Extract<DrawCommand, { type: "text" }> | null;
 };
 
 export class CanvasRenderer {
@@ -57,6 +58,16 @@ export class CanvasRenderer {
           -command.start,
           false
         );
+      } else if (command.type === "text") {
+        this.ctx.save();
+        this.ctx.translate(toCanvasX(command.position.x), toCanvasY(command.position.y));
+        this.ctx.rotate(-command.rotation);
+        this.ctx.fillStyle = overlays.selectedText === command ? "#2563eb" : "#111827";
+        this.ctx.font = `${Math.max(1, command.height * transform.scale)}px sans-serif`;
+        this.ctx.textBaseline = "alphabetic";
+        this.ctx.fillText(command.text.replace(/\\P/g, "\n"), 0, 0);
+        this.ctx.restore();
+        continue;
       }
       this.ctx.stroke();
     }

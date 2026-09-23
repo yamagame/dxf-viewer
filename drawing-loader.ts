@@ -28,7 +28,14 @@ function detectFormat(fileName: string): DrawingFormat | null {
 }
 
 function extractDxfDrawData(bytes: ArrayBuffer): ExtractedDrawData {
-  const text = new TextDecoder("utf-8").decode(bytes);
+  let text: string;
+  try {
+    // A fatal UTF-8 decode distinguishes valid UTF-8 from legacy DXF files
+    // whose Japanese text is commonly stored as Shift_JIS / Windows-31J.
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    text = new TextDecoder("shift_jis").decode(bytes);
+  }
   const parser = new DxfParser();
   const dxf: any = parser.parseSync(text);
   return extractDrawData(dxf.entities || []);
