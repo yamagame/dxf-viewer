@@ -447,7 +447,7 @@ describe("drawing-loader", () => {
               sweepAngle: Math.PI,
               flatness: 0.5,
             },
-            // 文字は対応対象外なので消費だけされる。
+            // テキストは描画対象として保持される。
             { type: "text" },
             {
               type: "arc",
@@ -473,10 +473,10 @@ describe("drawing-loader", () => {
     );
 
     const { commands, segments, bounds } = result.data;
-    expect(commands.map((command) => command.type)).toEqual(["line", "arc"]);
+    expect(commands.map((command) => command.type)).toEqual(["line", "text", "arc"]);
     expect(segments).toHaveLength(1);
 
-    const arc = commands[1];
+    const arc = commands[2];
     if (arc.type !== "arc") throw new Error("expected an arc command");
     expect(arc.center.x).toBeCloseTo(2, 6);
     expect(arc.center.y).toBeCloseTo(3, 6);
@@ -631,17 +631,17 @@ describe("drawing-loader", () => {
     expect(controller.filterVisibleCommands(result.data.commands)).toHaveLength(1);
   });
 
-  it("reports an empty result when the jww file holds no drawable figure", () => {
+  it("loads text-only JWW files as drawable content", () => {
     const result = expectStatus(
       loadDrawing({
         fileName: "plan.jww",
         bytes: buildJwwFile({ entities: [{ type: "text" }, { type: "text" }] }),
       }),
-      "empty"
+      "loaded"
     );
 
-    expect(result.message).toBe(EMPTY_MESSAGE);
-    expect("data" in result).toBe(false);
+    expect(result.data.commands.map((command) => command.type)).toEqual(["text", "text"]);
+    expect(result.data.bounds).not.toBeNull();
   });
 
   it("reports an empty result when the dxf file holds no supported entity", () => {

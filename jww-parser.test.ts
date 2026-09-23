@@ -1247,7 +1247,7 @@ describe("parseJww", () => {
     }
   });
 
-  it("consumes the unsupported figure classes placed between two lines", () => {
+  it("consumes unsupported classes and preserves supported text between two lines", () => {
     const document = parseJww(
       buildJwwFile({
         entities: [
@@ -1276,9 +1276,10 @@ describe("parseJww", () => {
 
     expect(document.entities.map((entity) => entity.type)).toEqual([
       "line",
+      "text",
       "line",
     ]);
-    const second = document.entities[1];
+    const second = document.entities[2];
     expect(second.type).toBe("line");
     if (second.type !== "line") return;
     expect(second.address).toEqual({ group: 3, layer: 4 });
@@ -1288,7 +1289,7 @@ describe("parseJww", () => {
     expect(second.to.y).toBeCloseTo(5, 6);
   });
 
-  it("counts the consumed figures without adding them to the entities", () => {
+  it("counts unsupported figures while retaining text entities", () => {
     const document = parseJww(
       buildJwwFile({
         entities: [
@@ -1307,8 +1308,14 @@ describe("parseJww", () => {
       })
     );
 
-    expect(document.entities).toHaveLength(2);
-    expect(document.skippedCount).toBe(3);
+    expect(document.entities).toHaveLength(4);
+    expect(document.entities.map((entity) => entity.type)).toEqual([
+      "text",
+      "line",
+      "text",
+      "arc",
+    ]);
+    expect(document.skippedCount).toBe(1);
   });
 
   it("consumes a point with a point code and a solid with an arbitrary color", () => {
