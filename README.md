@@ -75,6 +75,21 @@ DWG の変換には Docker と GNU LibreDWG を使います。リポジトリ直
 
 LibreDWGのDWG対応・変換品質には制限があり、元図面のすべての要素が変換・表示されるとは限りません。ビューア側のDXF対応エンティティは「DXF」節の範囲です。
 
+### DynaCAD（DCZ）から DXF への変換
+
+DynaCAD 図面（`.dcz`）は Python 3 と NumPy で DXF に変換できます。仕様が非公開のため解析結果に基づく変換で、線・ポリライン・円・円弧のみを出力します（文字・寸法・ハッチ・色・線種は対象外）。
+
+```bash
+python3 scripts/dcz-to-dxf.py ./drawings/elevation.dcz
+python3 scripts/dcz-to-dxf.py ./drawings/elevation.dcz ./converted/elevation.dxf
+```
+
+出力 DXF のレイヤーは次のとおりです。既存の出力ファイルは上書きしません。`--dump-dir DIR` を付けると、展開済みのバイナリ（`.unpacked.bin` / `.plain.bin`）も書き出します。
+
+- `DCZ-MAIN`: 通常の図形
+- `DCZ-GROUP`: グループ内の図形（窓など）
+- `DCZ-OTHER`: 意味が未解明の図形（非表示・旧版と思われる図形が重なることがあります）
+
 ### JWW（JW_cad 形式）
 
 描画する要素は次のとおりです。
