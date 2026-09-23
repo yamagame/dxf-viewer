@@ -18,6 +18,12 @@ export type ExtractedDrawData = {
   bounds: Bounds | null;
 };
 
+function stripTextWidthFormatting(text: string): string {
+  return text
+    .replace(/\{\\H[^{}]*\}/g, "")
+    .replace(/\\W[+-]?(?:\d+(?:\.\d*)?|\.\d+);/g, "");
+}
+
 export function computeSelectableVertices(
   visibleSegments: Segment[],
   onProgress?: (completed: number, total: number) => void
@@ -116,7 +122,7 @@ export function extractDrawData(entities: any[]): ExtractedDrawData {
       const height = entity.height ?? entity.textHeight;
       if (position && Number.isFinite(position.x) && Number.isFinite(position.y) && Number.isFinite(height) && height > 0) {
         includePoint(position.x, position.y);
-        commands.push({ type: "text", layer, position: { x: position.x, y: position.y }, text: entity.text, height, rotation: ((entity.rotation ?? 0) * Math.PI) / 180 });
+        commands.push({ type: "text", layer, position: { x: position.x, y: position.y }, text: stripTextWidthFormatting(entity.text), height, rotation: ((entity.rotation ?? 0) * Math.PI) / 180 });
       }
       continue;
     }

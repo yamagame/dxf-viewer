@@ -57,6 +57,24 @@ npm test
 - CIRCLE
 - ARC
 
+### DWG から DXF への変換
+
+DWG の変換には Docker と GNU LibreDWG を使います。リポジトリ直下で次を実行すると、コンテナイメージが未作成の場合は自動でビルドし、入力ファイルと同じ場所に DXF を作成します。
+
+```bash
+./scripts/dwg-to-dxf.sh ./drawings/plan.dwg
+```
+
+出力先を指定する場合:
+
+```bash
+./scripts/dwg-to-dxf.sh ./drawings/plan.dwg ./converted/plan.dxf
+```
+
+スクリプトは既存の出力ファイルを上書きしません。変換後の DXF は通常の DXF と同様にビューアで読み込めます。コンテナのLibreDWGバージョンは `tools/dwg-converter/Dockerfile` の `LIBREDWG_VERSION` で指定します。Dockerイメージ名を変える場合は `DWG_CONVERTER_IMAGE` 環境変数を指定してください。
+
+LibreDWGのDWG対応・変換品質には制限があり、元図面のすべての要素が変換・表示されるとは限りません。ビューア側のDXF対応エンティティは「DXF」節の範囲です。
+
 ### JWW（JW_cad 形式）
 
 描画する要素は次のとおりです。
