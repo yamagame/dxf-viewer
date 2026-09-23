@@ -1,6 +1,6 @@
 import { getVertexKey, type Point, type Segment } from "./geometry";
 import type { DrawCommand, ExtractedDrawData } from "./drawing-model";
-import { loadDrawing } from "./drawing-loader";
+import type { DrawingWorkerRequest, DrawingWorkerResult, DrawingWorkerMessage } from "./drawing-worker-protocol";
 import { LayerController } from "./layer-controller";
 import { MeasurementManager } from "./measurement-manager";
 import { EdgeSelectionManager } from "./edge-selection-manager";
@@ -23,6 +23,7 @@ class DxfViewerApp {
   private readonly zoomOutButton = getRequiredElement<HTMLButtonElement>("zoomOutButton");
   private readonly layerControlsEl = getRequiredElement<HTMLDivElement>("layerControls");
   private readonly statusEl = getRequiredElement<HTMLParagraphElement>("status");
+  private readonly loadProgressEl = getRequiredElement<HTMLProgressElement>("loadProgress");
   private readonly edgeInfoEl = document.getElementById("edgeInfo");
   private readonly measureInfoEl = getRequiredElement<HTMLParagraphElement>("measureInfo");
   private readonly canvas = getRequiredElement<HTMLCanvasElement>("viewer");
@@ -42,6 +43,8 @@ class DxfViewerApp {
   private isPanByMiddleButton = false;
   private activePointerId: number | null = null;
   private suppressNextClick = false;
+  private loadSequence = 0;
+  private cancelDrawingWorker: (() => void) | null = null;
 
   constructor() {
     this.bindEvents();
@@ -113,8 +116,24 @@ class DxfViewerApp {
     return this.layerController.filterVisibleSegments(this.drawSegments);
   }
 
-  private rebuildSelectableVertices(): void {
-    this.selectionController.rebuildSelectableVertices(this.getVisibleSegments());
+  private async rebuildSelectableVertices(): Promise<void> {
+    this.selectionController.clear();
+    this.loadProgressEl.hidden = false;
+    this.loadProgressEl.removeAttribute("value");
+    this.statusEl.textContent = "計測用の頂点・交点を更新中…";
+    try {
+      const result = await this.runDrawingWorker({ type: "vertices", segments: this.getVisibleSegments() });
+      if (result.type !== "vertices") throw new Error("頂点の解析結果を受信できませんでした。");
+      this.selectionController.setSelectableVertices(result.vertices);
+      this.loadProgressEl.hidden = true;
+      this.statusEl.textContent = "レイヤー表示・計測用の頂点を更新しました。";
+      this.render();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      console.error(error);
+      this.loadProgressEl.hidden = true;
+      this.statusEl.textContent = "計測用の頂点の更新に失敗しました。レイヤーを切り替えて再試行してください。";
+    }
   }
 
   private resetEdgeSelection(): void {
@@ -156,7 +175,7 @@ class DxfViewerApp {
       checkbox.checked = this.layerController.isVisible(layer);
       checkbox.addEventListener("change", () => {
         this.layerController.setVisible(layer, checkbox.checked);
-        this.rebuildSelectableVertices();
+        void this.rebuildSelectableVertices();
         this.validateEdgeSelection();
         this.resetMeasurement();
         this.render();
@@ -235,14 +254,35 @@ class DxfViewerApp {
     this.clearCanvas();
   }
 
-  private showDrawing(data: ExtractedDrawData): void {
+  private readFileWithProgress(file: File, sequence: number): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onprogress = (event) => {
+        if (sequence !== this.loadSequence) return;
+        if (event.lengthComputable) {
+          this.loadProgressEl.removeAttribute("max");
+          this.loadProgressEl.max = file.size || 1;
+          this.loadProgressEl.value = event.loaded;
+        }
+      };
+      reader.onload = () => {
+        if (reader.result instanceof ArrayBuffer) resolve(reader.result);
+        else reject(new Error("ファイルを読み込めませんでした。"));
+      };
+      reader.onerror = () => reject(reader.error || new Error("ファイルを読み込めませんでした。"));
+      reader.onabort = () => reject(new Error("ファイルの読み込みが中断されました。"));
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  private showDrawing(data: ExtractedDrawData, vertices: Point[]): void {
     this.drawCommands = data.commands;
     this.drawSegments = data.segments;
     this.layerController.setLayers(data.layers);
     this.viewportController.setBounds(data.bounds);
 
     this.renderLayerControls();
-    this.rebuildSelectableVertices();
+    this.selectionController.setSelectableVertices(vertices);
     this.resetMeasurement();
     this.viewportController.fitToScreen(this.canvas.width, this.canvas.height, 30);
     this.setZoomControlsEnabled(true);
@@ -250,25 +290,88 @@ class DxfViewerApp {
     this.render();
   }
 
+  private runDrawingWorker(request: DrawingWorkerRequest): Promise<DrawingWorkerResult> {
+    this.cancelDrawingWorker?.();
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(new URL("./drawing-worker.ts", import.meta.url), { type: "module" });
+      const cleanup = (): void => {
+        worker.terminate();
+        if (this.cancelDrawingWorker === cancel) this.cancelDrawingWorker = null;
+      };
+      const cancel = (): void => {
+        cleanup();
+        reject(new DOMException("解析を中断しました。", "AbortError"));
+      };
+      this.cancelDrawingWorker = cancel;
+      worker.onmessage = (event: MessageEvent<DrawingWorkerMessage>) => {
+        if (this.cancelDrawingWorker !== cancel) return;
+        const message = event.data;
+        if (message.type === "progress") {
+          this.loadProgressEl.max = message.total || 1;
+          this.loadProgressEl.value = message.completed;
+          const percent = message.total ? Math.floor(message.completed / message.total * 100) : 100;
+          this.statusEl.textContent = `計測用の頂点・交点を準備中: ${percent}%`;
+          return;
+        }
+        cleanup();
+        if (message.type === "error") reject(new Error(message.message));
+        else resolve(message.result);
+      };
+      const fail = (message: string): void => {
+        cleanup();
+        reject(new Error(message));
+      };
+      worker.onerror = (event) => fail(event.message || "解析に失敗しました。");
+      worker.onmessageerror = () => fail("解析結果を受信できませんでした。");
+      try {
+        worker.postMessage(request, request.type === "load" ? [request.source.bytes] : []);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+  }
+
   private readonly onFileChange = async (): Promise<void> => {
     const [file] = this.fileInput.files || [];
     if (!file) return;
 
+    const sequence = ++this.loadSequence;
+    this.cancelDrawingWorker?.();
+    this.loadProgressEl.hidden = false;
+    this.loadProgressEl.removeAttribute("value");
     this.statusEl.textContent = `読み込み中: ${file.name}`;
     this.clearDrawingView();
 
     try {
-      const bytes = await file.arrayBuffer();
-      const result = loadDrawing({ fileName: file.name, bytes });
+      const bytes = await this.readFileWithProgress(file, sequence);
+      if (sequence !== this.loadSequence) return;
+      this.statusEl.textContent = `解析中: ${file.name}`;
+      this.loadProgressEl.removeAttribute("value");
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (sequence !== this.loadSequence) return;
+      const response = await this.runDrawingWorker({ type: "load", source: { fileName: file.name, bytes } });
+      if (sequence !== this.loadSequence) return;
+      if (response.type !== "drawing") throw new Error("図面の解析結果を受信できませんでした。");
+      const result = response.result;
       if (result.status !== "loaded") {
+        this.loadProgressEl.hidden = true;
         this.statusEl.textContent = result.message;
         return;
       }
 
-      this.showDrawing(result.data);
+      this.statusEl.textContent = `描画中: ${file.name}`;
+      this.loadProgressEl.removeAttribute("value");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (sequence !== this.loadSequence) return;
+      this.showDrawing(result.data, response.vertices);
+      this.loadProgressEl.hidden = true;
       this.statusEl.textContent = `表示完了: ${file.name} (${this.drawCommands.length}要素, ${this.layerController.getLayerNames().length}レイヤー)`;
     } catch (error) {
+      if (sequence !== this.loadSequence) return;
       console.error(error);
+      this.loadProgressEl.hidden = true;
+      this.statusEl.textContent = "ファイルの読み込みに失敗しました。";
       this.clearDrawingView();
     }
   };

@@ -1,4 +1,4 @@
-import { getVertexKey, intersectSegments, normalizeLayerName, type Point, type Segment } from "./geometry";
+import { getVertexKey, intersectSegments, INTERSECTION_EPSILON, normalizeLayerName, type Point, type Segment } from "./geometry";
 
 export type DrawCommand =
   | { type: "line"; layer: string; from: Point; to: Point }
@@ -17,7 +17,10 @@ export type ExtractedDrawData = {
   bounds: Bounds | null;
 };
 
-export function computeSelectableVertices(visibleSegments: Segment[]): Point[] {
+export function computeSelectableVertices(
+  visibleSegments: Segment[],
+  onProgress?: (completed: number, total: number) => void
+): Point[] {
   const vertices: Point[] = [];
   const vertexKeySet = new Set<string>();
 
@@ -34,13 +37,36 @@ export function computeSelectableVertices(visibleSegments: Segment[]): Point[] {
     includeVertex(segment.to.x, segment.to.y);
   }
 
-  for (let i = 0; i < visibleSegments.length - 1; i += 1) {
-    for (let j = i + 1; j < visibleSegments.length; j += 1) {
-      const intersection = intersectSegments(visibleSegments[i], visibleSegments[j]);
+  // Sort bounding boxes along X so disjoint ranges never reach the exact
+  // intersection test. Pad by the same parametric tolerance as intersectSegments.
+  const entries = visibleSegments.map((segment, index) => {
+    const padX = Math.abs(segment.to.x - segment.from.x) * INTERSECTION_EPSILON;
+    const padY = Math.abs(segment.to.y - segment.from.y) * INTERSECTION_EPSILON;
+    return {
+      segment, index,
+      minX: Math.min(segment.from.x, segment.to.x) - padX,
+      maxX: Math.max(segment.from.x, segment.to.x) + padX,
+      minY: Math.min(segment.from.y, segment.to.y) - padY,
+      maxY: Math.max(segment.from.y, segment.to.y) + padY,
+    };
+  }).sort((a, b) => a.minX - b.minX);
+
+  onProgress?.(0, entries.length);
+  for (let i = 0; i < entries.length; i += 1) {
+    const a = entries[i];
+    for (let j = i + 1; j < entries.length && entries[j].minX <= a.maxX; j += 1) {
+      const b = entries[j];
+      if (b.minY > a.maxY || b.maxY < a.minY) continue;
+      // Preserve operand order and rounding from the original enumeration.
+      const intersection = a.index < b.index
+        ? intersectSegments(a.segment, b.segment)
+        : intersectSegments(b.segment, a.segment);
       if (!intersection) continue;
       includeVertex(intersection.x, intersection.y);
     }
+    if ((i + 1) % 256 === 0) onProgress?.(i + 1, entries.length);
   }
+  onProgress?.(entries.length, entries.length);
 
   return vertices;
 }

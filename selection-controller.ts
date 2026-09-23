@@ -16,7 +16,11 @@ export class SelectionController {
   }
 
   rebuildSelectableVertices(visibleSegments: Segment[]): void {
-    this.selectableVertices = computeSelectableVertices(visibleSegments);
+    this.setSelectableVertices(computeSelectableVertices(visibleSegments));
+  }
+
+  setSelectableVertices(vertices: Point[]): void {
+    this.selectableVertices = vertices;
     if (this.hoveredVertex) {
       const keySet = new Set(this.selectableVertices.map((v) => getVertexKey(v.x, v.y)));
       const hoveredKey = getVertexKey(this.hoveredVertex.x, this.hoveredVertex.y);

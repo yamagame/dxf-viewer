@@ -50,4 +50,14 @@ describe("SelectionController", () => {
     const edge = selection.findNearestEdge(segments, { clientX: 3, clientY: 2 }, rect, toCanvas);
     expect(edge?.layer).toBe("A");
   });
+
+  it("accepts worker vertices and discards hover when the selected layer is hidden", () => {
+    const selection = new SelectionController(12, 8);
+    selection.setSelectableVertices([{ x: 5, y: 5 }]);
+    selection.updateHoveredVertex({ clientX: 5, clientY: 5 }, rect, toCanvas);
+    expect(selection.getHoveredVertex()).toEqual({ x: 5, y: 5 });
+    selection.setSelectableVertices([]);
+    expect(selection.getHoveredVertex()).toBeNull();
+    expect(selection.findNearestVertex({ clientX: 5, clientY: 5 }, rect, toCanvas)).toBeNull();
+  });
 });
