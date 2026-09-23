@@ -3,6 +3,10 @@
 DXF ファイルと JWW（JW_cad 形式）ファイルをブラウザ上で読み込んで表示するシンプルなWebアプリです。
 ツールバーを上部に配置し、図面表示領域はウインドウ全体に広がります。
 
+公開ページ: https://yamagame.github.io/dxf-viewer/
+
+`main` ブランチへの push 後、GitHub Actions がビルドして GitHub Pages に公開します。初回は GitHub リポジトリの Settings → Pages で Source を「GitHub Actions」に設定してください。
+
 ## 使い方
 
 1. 依存関係をインストール
