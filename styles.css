@@ -17,6 +17,11 @@ body {
   height: 100%;
 }
 
+.toolbar,
+.layer-window {
+  zoom: 0.8;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -59,6 +64,8 @@ body {
   margin: 0;
   min-height: 20px;
   color: #374151;
+  overflow-wrap: anywhere;
+  font-size: 80%;
 }
 
 .edge-info {
@@ -91,6 +98,15 @@ body {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.95);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+
+.status-footer {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid #d1d5db;
+  border-width: 1px 0 0;
+  background: #ffffff;
 }
 
 .layer-window-title {

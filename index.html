@@ -16,7 +16,6 @@
           <button id="zoomOutButton" type="button" disabled>縮小 -</button>
           <button id="zoomInButton" type="button" disabled>拡大 +</button>
         </div>
-        <p id="status" class="status">ファイルを選択してください。</p>
         <p id="edgeInfo" class="edge-info">エッジ選択: エッジをクリックしてください。</p>
         <p id="measureInfo" class="measure-info">距離測定: 2頂点をクリックしてください。</p>
       </header>
@@ -27,6 +26,9 @@
           <div id="layerControls" class="layer-controls"></div>
         </aside>
       </section>
+      <footer class="status-footer" aria-label="ステータス">
+        <p id="status" class="status">ファイルを選択してください。</p>
+      </footer>
     </main>
 
     <script type="module" src="/app.ts"></script>
