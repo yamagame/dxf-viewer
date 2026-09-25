@@ -567,11 +567,11 @@ class DxfViewerApp {
     if (!this.hasLoadedDrawing()) return;
     event.preventDefault();
     if (this.isDragging) return;
-    if (event.deltaY < 0) {
-      this.viewportController.applyZoom(1.2);
-      this.render();
-    } else if (event.deltaY > 0) {
-      this.viewportController.applyZoom(1 / 1.2);
+    if (event.deltaY !== 0) {
+      // Scale zoom smoothly with wheel distance; small trackpad deltas now
+      // produce proportionally smaller changes than a full mouse-wheel notch.
+      const zoomFactor = Math.exp(-event.deltaY * 0.001);
+      this.viewportController.applyZoom(zoomFactor);
       this.render();
     }
   };
