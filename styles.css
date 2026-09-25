@@ -77,7 +77,7 @@ body {
 }
 
 .load-progress[hidden] {
-  display: none;
+  visibility: hidden;
 }
 
 .edge-info {
@@ -113,8 +113,8 @@ body {
 }
 
 .status-footer {
-  flex: 0 0 auto;
-  min-height: 40px;
+  flex: 0 0 49px;
+  height: 49px;
   padding: 8px 16px;
   border: 1px solid #d1d5db;
   border-width: 1px 0 0;
