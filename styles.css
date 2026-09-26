@@ -48,7 +48,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 240px;
+  min-height: 0;
   overflow: auto;
   font-size: 14px;
 }
@@ -58,6 +58,16 @@ body {
   align-items: center;
   gap: 6px;
   padding: 2px 0;
+}
+
+.layer-item.has-selected-edge span {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.layer-item.has-selected-edge {
+  background: #fff1f0;
+  border-radius: 4px;
 }
 
 .status {
@@ -105,6 +115,10 @@ body {
   right: 24px;
   min-width: 220px;
   max-width: 280px;
+  min-height: 100px;
+  max-height: calc(100% - 48px);
+  resize: vertical;
+  overflow: auto;
   padding: 10px 12px;
   border: 1px solid #d1d5db;
   border-radius: 8px;

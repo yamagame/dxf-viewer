@@ -184,6 +184,9 @@ class DxfViewerApp {
     layerNames.forEach((layer) => {
       const label = document.createElement("label");
       label.className = "layer-item";
+      if (this.edgeSelectionManager.getSelected()?.layer === layer) {
+        label.classList.add("has-selected-edge");
+      }
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = this.layerController.isVisible(layer);
@@ -529,6 +532,7 @@ class DxfViewerApp {
       this.modelToCanvas
     );
     this.updateEdgeInfo(this.edgeSelectionManager.select(nearestEdge));
+    this.renderLayerControls();
 
     const nearestVertex = this.selectionController.findNearestVertex(
       event,
