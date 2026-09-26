@@ -24,6 +24,8 @@ class DxfViewerApp {
   private readonly layerControlsEl = getRequiredElement<HTMLDivElement>("layerControls");
   private readonly statusEl = getRequiredElement<HTMLParagraphElement>("status");
   private readonly loadProgressEl = getRequiredElement<HTMLProgressElement>("loadProgress");
+  private readonly measurementScaleNumeratorEl = getRequiredElement<HTMLInputElement>("measurementScaleNumerator");
+  private readonly measurementScaleDenominatorEl = getRequiredElement<HTMLInputElement>("measurementScaleDenominator");
   private readonly edgeInfoEl = document.getElementById("edgeInfo");
   private readonly measureInfoEl = getRequiredElement<HTMLParagraphElement>("measureInfo");
   private readonly canvas = getRequiredElement<HTMLCanvasElement>("viewer");
@@ -64,6 +66,8 @@ class DxfViewerApp {
     this.fitButton.addEventListener("click", this.onFitClick);
     this.zoomInButton.addEventListener("click", this.onZoomInClick);
     this.zoomOutButton.addEventListener("click", this.onZoomOutClick);
+    this.measurementScaleNumeratorEl.addEventListener("input", this.onMeasurementScaleInput);
+    this.measurementScaleDenominatorEl.addEventListener("input", this.onMeasurementScaleInput);
 
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
     this.canvas.addEventListener("pointermove", this.onPointerMove);
@@ -73,6 +77,14 @@ class DxfViewerApp {
     this.canvas.addEventListener("click", this.onCanvasClick);
     this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
   }
+
+  private readonly onMeasurementScaleInput = (): void => {
+    const numerator = this.measurementScaleNumeratorEl.valueAsNumber;
+    const denominator = this.measurementScaleDenominatorEl.valueAsNumber;
+    if (!Number.isFinite(numerator) || numerator <= 0 || !Number.isFinite(denominator) || denominator <= 0) return;
+    this.measurementManager.setScale(numerator / denominator);
+    this.measureInfoEl.textContent = this.measurementManager.getCurrentMessage();
+  };
 
   private hasLoadedDrawing(): boolean {
     return this.drawCommands.length > 0 && this.viewportController.hasBounds();

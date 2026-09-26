@@ -77,7 +77,7 @@ body {
 }
 
 .load-progress[hidden] {
-  visibility: hidden;
+  display: none;
 }
 
 .edge-info {
@@ -113,12 +113,30 @@ body {
 }
 
 .status-footer {
+  position: relative;
   flex: 0 0 49px;
   height: 49px;
   padding: 8px 16px;
   border: 1px solid #d1d5db;
   border-width: 1px 0 0;
   background: #ffffff;
+}
+
+.measurement-scale {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  position: absolute;
+  right: 16px;
+  top: 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.measurement-scale input {
+  width: 84px;
+  padding: 4px 6px;
 }
 
 .layer-window-title {

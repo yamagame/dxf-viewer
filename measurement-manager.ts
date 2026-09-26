@@ -2,6 +2,17 @@ import type { Point } from "./geometry";
 
 export class MeasurementManager {
   private selectedPoints: Point[] = [];
+  private scale = 1;
+
+  setScale(scale: number): void {
+    this.scale = scale;
+  }
+
+  getCurrentMessage(): string {
+    if (this.selectedPoints.length === 2) return this.formatDistanceMessage();
+    if (this.selectedPoints.length === 1) return "距離測定: 2つ目の頂点をクリックしてください。";
+    return "距離測定: 2頂点をクリックしてください。";
+  }
 
   reset(): string {
     this.selectedPoints = [];
@@ -17,9 +28,9 @@ export class MeasurementManager {
 
     if (this.selectedPoints.length === 2) {
       const [a, b] = this.selectedPoints;
-      const distance = Math.hypot(b.x - a.x, b.y - a.y);
-      const deltaX = b.x - a.x;
-      const deltaY = b.y - a.y;
+      const distance = Math.hypot(b.x - a.x, b.y - a.y) * this.scale;
+      const deltaX = (b.x - a.x) * this.scale;
+      const deltaY = (b.y - a.y) * this.scale;
       return `距離: ${distance.toFixed(3)} (ΔX: ${deltaX.toFixed(3)}, ΔY: ${deltaY.toFixed(3)})`;
     }
 
@@ -46,9 +57,9 @@ export class MeasurementManager {
 
   private formatDistanceMessage(): string {
     const [a, b] = this.selectedPoints;
-    const distance = Math.hypot(b.x - a.x, b.y - a.y);
-    const deltaX = b.x - a.x;
-    const deltaY = b.y - a.y;
+    const distance = Math.hypot(b.x - a.x, b.y - a.y) * this.scale;
+    const deltaX = (b.x - a.x) * this.scale;
+    const deltaY = (b.y - a.y) * this.scale;
     return `距離: ${distance.toFixed(3)} (ΔX: ${deltaX.toFixed(3)}, ΔY: ${deltaY.toFixed(3)})`;
   }
 }

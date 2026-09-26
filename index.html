@@ -27,6 +27,12 @@
         </aside>
       </section>
       <footer class="status-footer" aria-label="ステータス">
+        <div class="measurement-scale" aria-label="計測スケール">
+          <label for="measurementScaleNumerator">スケール</label>
+          <input id="measurementScaleNumerator" type="number" min="0.000001" step="any" value="1" inputmode="decimal" aria-label="スケールの分子" />
+          <span aria-hidden="true">/</span>
+          <input id="measurementScaleDenominator" type="number" min="0.000001" step="any" value="1" inputmode="decimal" aria-label="スケールの分母" />
+        </div>
         <p id="status" class="status">ファイルを選択してください。</p>
         <progress id="loadProgress" class="load-progress" aria-label="ファイル読み込みの進捗" hidden></progress>
       </footer>
