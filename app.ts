@@ -509,7 +509,12 @@ class DxfViewerApp {
       return;
     }
 
-    const clickedText = this.findTextAt(event);
+    const nearestVertex = this.selectionController.findNearestVertex(
+      event,
+      this.canvas.getBoundingClientRect(),
+      this.modelToCanvas
+    );
+    const clickedText = nearestVertex ? null : this.findTextAt(event);
     if (clickedText) {
       this.selectedText = clickedText;
       this.render();
@@ -534,11 +539,6 @@ class DxfViewerApp {
     this.updateEdgeInfo(this.edgeSelectionManager.select(nearestEdge));
     this.renderLayerControls();
 
-    const nearestVertex = this.selectionController.findNearestVertex(
-      event,
-      this.canvas.getBoundingClientRect(),
-      this.modelToCanvas
-    );
     if (!nearestVertex) {
       this.measureInfoEl.textContent = "距離測定: 頂点付近をクリックしてください。";
       this.render();
