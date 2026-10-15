@@ -51,6 +51,14 @@ export class MeasurementManager {
     return this.formatDistanceMessage();
   }
 
+  getMidpointDeltaMessage(hovered: Point | null): string {
+    if (this.selectedPoints.length !== 2 || !hovered) return "";
+    const [a, b] = this.selectedPoints;
+    const dx = (hovered.x - (a.x + b.x) / 2) * this.scale;
+    const dy = (hovered.y - (a.y + b.y) / 2) * this.scale;
+    return `中点からのΔX: ${dx.toFixed(3)}, ΔY: ${dy.toFixed(3)}`;
+  }
+
   getSelectedPoints(): Point[] {
     return this.selectedPoints;
   }

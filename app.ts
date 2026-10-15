@@ -83,7 +83,7 @@ class DxfViewerApp {
     const denominator = this.measurementScaleDenominatorEl.valueAsNumber;
     if (!Number.isFinite(numerator) || numerator <= 0 || !Number.isFinite(denominator) || denominator <= 0) return;
     this.measurementManager.setScale(numerator / denominator);
-    this.measureInfoEl.textContent = this.measurementManager.getCurrentMessage();
+    this.refreshMeasureInfo();
   };
 
   private hasLoadedDrawing(): boolean {
@@ -164,6 +164,12 @@ class DxfViewerApp {
       this.layerController.isVisible(layerName)
     );
     if (message) this.updateEdgeInfo(message);
+  }
+
+  private refreshMeasureInfo(): void {
+    const base = this.measurementManager.getCurrentMessage();
+    const midpoint = this.measurementManager.getMidpointDeltaMessage(this.selectionController.getHoveredVertex());
+    this.measureInfoEl.textContent = midpoint ? `${base} | ${midpoint}` : base;
   }
 
   private resetMeasurement(): void {
@@ -463,6 +469,7 @@ class DxfViewerApp {
       if (!sameEdge) {
         this.edgeSelectionManager.setHovered(nextHoveredEdge);
       }
+      if (changed) this.refreshMeasureInfo();
       if (changed || !sameEdge) {
         this.render();
       }
@@ -498,6 +505,7 @@ class DxfViewerApp {
   private readonly onPointerLeave = (): void => {
     this.edgeSelectionManager.clearHovered();
     this.selectionController.clearHoveredVertex();
+    this.refreshMeasureInfo();
     this.render();
   };
 
@@ -547,6 +555,7 @@ class DxfViewerApp {
     this.measureInfoEl.textContent = event.altKey
       ? this.measurementManager.advanceSecondPoint(nearestVertex)
       : this.measurementManager.selectPoint(nearestVertex);
+    this.refreshMeasureInfo();
     this.render();
   };
 
